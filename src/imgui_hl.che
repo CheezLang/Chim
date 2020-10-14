@@ -1,0 +1,9 @@
+use import imgui
+
+#export_scope
+
+impl ImVec2 {
+    add :: (a: Self, b: Self) -> Self #operator("+") {
+        return Self(a.x + b.x, a.y + b.y)
+    }
+}

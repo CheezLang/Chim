@@ -1,0 +1,209 @@
+use import std.string
+use import std.array
+use import std.math
+use import std.time
+
+mem :: import std.mem.allocator
+fmt :: import std.fmt
+io  :: import std.io
+C   :: import std.c
+
+use import glfw
+use import glfw_hl
+
+use import opengl.glad_binding
+
+use import imgui_glfw
+use import imgui_opengl
+imgui :: import imgui
+
+use import chim
+
+vec2 :: imgui.ImVec2
+vec4 :: imgui.ImVec4
+
+#export_scope
+
+gladLoadGL :: () -> i32;
+
+glfw_error_callback :: (error: i32, description: ^mut char8) {
+    C.printf("Glfw Error %d: %s\n", error, description)
+}
+
+Main :: () {
+    mut chim := mem.alloc(Chim)
+    defer mem.free(chim)
+
+    C.memset(chim, @sizeof(Chim), 0)
+    *chim = Chim.new()
+
+    glfwSetErrorCallback(glfw_error_callback)
+
+    if glfwInit() == 0 {
+        io.println("Failed to initialize GLFW")
+        return
+    }
+    defer glfwTerminate()
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3)
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3)
+    glfwWindowHint(GLFW_VISIBLE, 0)
+    glfwWindowHint(GLFW_MAXIMIZED, 0)
+    glfwWindowHint(GLFW_RESIZABLE, 1)
+
+    vidmode := glfwGetVideoMode(glfwGetPrimaryMonitor())
+
+    window := glfwCreateWindow(1280, 720, "Chim", null, null)
+    // window := glfwCreateWindow(vidmode.width, vidmode.height, "Chim", null, null)
+    if window == null {
+        io.println("Failed to create window")
+        return
+    }
+    defer glfwDestroyWindow(window)
+
+    glfwMakeContextCurrent(window)
+    glfwSwapInterval(0)
+    if gladLoadGL() != 1 {
+        return
+    }
+
+    glfwSetWindowUserPointer(window, chim)
+    glfwShowWindow(window)
+
+    // setup callbacks
+    glfwSetKeyCallback(window, (window, c, code, action, mods) => {
+        chim := cast(^Chim) glfwGetWindowUserPointer(window)
+        chim.on_key(cast c, cast code, cast action, cast mods)
+    })
+    glfwSetCharCallback(window, (window, c) => {
+        chim := cast(^Chim) glfwGetWindowUserPointer(window)
+        chim.on_char(cast c)
+    })
+    glfwSetWindowFocusCallback(window, (window, c) => {
+        chim := cast(^Chim) glfwGetWindowUserPointer(window)
+        chim.on_focus(cast c)
+    })
+    glfwSetWindowIconifyCallback(window, (window, c) => {
+        chim := cast(^Chim) glfwGetWindowUserPointer(window)
+        chim.on_iconify(cast c)
+    })
+    glfwSetFramebufferSizeCallback(window, (window, w, h) => {
+        glViewport(0, 0, w, h)
+
+        chim := cast(^Chim) glfwGetWindowUserPointer(window)
+        chim.on_framebuffer_resize(f32(w), f32(h))
+    })
+
+    // ge initial size of framebuffer
+    {
+        w := 0i32
+        h := 0i32
+        glfwGetFramebufferSize(window, ^w, ^h)
+        chim.on_framebuffer_resize(f32(w), f32(h))
+    }
+
+    // imgui setup
+    if !init_imgui(window) {
+        return
+    }
+    defer shutdown_imgui()
+
+    mut show_demo_window := true
+
+    mut last_frame_time := get_time_microseconds()
+
+    mut frame_timer := 0.0
+    mut fps_counter := 0
+    mut current_fps := 0
+
+    chim.initialize()
+
+    while glfwWindowShouldClose(window) == 0 {
+        this_frame_time     := get_time_microseconds()
+        last_frame_duration := this_frame_time - last_frame_time
+        last_frame_time = this_frame_time
+
+        // convert time from microseconds to seconds
+        delta_time := double(last_frame_duration) * 0.000001
+
+        frame_timer += delta_time
+        if frame_timer >= 1 {
+            current_fps = fps_counter
+            frame_timer -= 1
+            fps_counter = 0
+        }
+
+        glfwPollEvents()
+        glClearColor(0, 0, 0, 1)
+        glClear(GL_COLOR_BUFFER_BIT)
+
+        chim.update()
+
+        //
+        begin_frame()
+        chim.render()
+        chim.debug_render(delta_time, current_fps)
+
+        if show_demo_window then
+            imgui.ShowDemoWindow(^mut show_demo_window)
+
+        end_frame()
+
+        // present image
+        glfwSwapBuffers(window)
+
+        fps_counter += 1
+    }
+}
+
+begin_frame :: () {
+    ImGui_ImplOpenGL3_NewFrame()
+    ImGui_ImplGlfw_NewFrame()
+    imgui.NewFrame()
+}
+
+end_frame :: () {
+    io := imgui.GetIO()
+
+    // rendering
+    imgui.EndFrame()
+    imgui.Render()
+    ImGui_ImplOpenGL3_RenderDrawData(imgui.GetDrawData())
+}
+
+init_imgui :: (window: ^GLFWwindow) -> bool {
+    context := imgui.CreateContext(null)
+
+    if context == null {
+        io.println("[ERROR] imgui.CreateContext failed")
+        return false
+    }
+
+    imgui_io := imgui.GetIO()
+
+    imgui.StyleColorsDark(null)
+
+    // change corners so they are right angles instead of rounded
+    style := imgui.GetStyle()
+    style.WindowRounding = 0.0
+    style.WindowBorderSize = 0.0
+    style.WindowPadding = vec2(0, 0)
+
+    //
+    if !ImGui_ImplGlfw_InitForOpenGL(cast window, true) {
+        io.println("[ERROR] imgui.ImGui_ImplGlfw_InitForOpenGL failed")
+        return false
+    }
+    if !ImGui_ImplOpenGL3_Init("#version 130") {
+        io.println("[ERROR] imgui.ImGui_ImplOpenGL3_Init failed")
+        return false
+    }
+
+    return true
+}
+
+shutdown_imgui :: () {
+    ImGui_ImplOpenGL3_Shutdown()
+    ImGui_ImplGlfw_Shutdown()
+    imgui.DestroyContext(null)
+}
