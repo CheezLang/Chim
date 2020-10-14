@@ -62,7 +62,7 @@ Main :: () {
     defer glfwDestroyWindow(window)
 
     glfwMakeContextCurrent(window)
-    glfwSwapInterval(0)
+    glfwSwapInterval(1)
     if gladLoadGL() != 1 {
         return
     }

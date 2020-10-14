@@ -1,8 +1,9 @@
+use import std.rc
+use import std.box
 use import std.string
 use import std.array
 use import std.ring_queue
 use import std.unicode
-
 
 mem :: import std.mem.allocator
 io  :: import std.io
@@ -16,6 +17,8 @@ use import imgui_hl
 use import imgui_opengl
 imgui :: import imgui
 
+use import editor
+
 vec2 :: imgui.ImVec2
 vec4 :: imgui.ImVec4
 
@@ -28,8 +31,9 @@ SLOTS_Y :: 2048
 #export_scope
 
 Slot :: struct {
-    c   : u32
-    col : PaletteIndex
+    c   : char
+    fg  : PaletteIndex
+    bg  : PaletteIndex
 }
 
 PaletteIndex :: enum #tag_type(i32) #copy {
@@ -46,6 +50,7 @@ PaletteIndex :: enum #tag_type(i32) #copy {
     Comment
     MultiLineComment
     Background
+    MenuBackground
     Cursor
     Selection
     ErrorMarker
@@ -60,6 +65,8 @@ PaletteIndex :: enum #tag_type(i32) #copy {
 Command :: enum {
     ChangeFontSize  : f32
     ChangeFont      : String
+    TabNext
+    TabPrev
 }
 
 Palette :: struct {
@@ -82,6 +89,7 @@ impl Palette {
         *values[int(PaletteIndex.Comment)]                   = 0xff206020
         *values[int(PaletteIndex.MultiLineComment)]          = 0xff406020
         *values[int(PaletteIndex.Background)]                = 0xff101010
+        *values[int(PaletteIndex.MenuBackground)]            = 0xff202020
         *values[int(PaletteIndex.Cursor)]                    = 0xffe0e0e0
         *values[int(PaletteIndex.Selection)]                 = 0x80a06020
         *values[int(PaletteIndex.ErrorMarker)]               = 0x800020ff
@@ -101,6 +109,12 @@ impl Palette {
 Chim :: struct {
     slots           : []mut Slot
     commands        := RingQueue[Command].new()
+
+    // editor stuff
+    tabs            := Array[Rc[Tab]].new()
+    buffers         := Array[Rc[Buffer]].new()
+
+    active_tab      := 0
 
     window_pixel_size := vec2(0, 0)
 
@@ -122,7 +136,7 @@ Chim :: struct {
 
 impl Drop for Chim {
     drop :: (&Self) {
-        // mem.free_n(self.slots)
+        mem.free_n(self.slots)
     }
 }
 
@@ -177,6 +191,14 @@ impl Chim {
 
     on_char :: (&mut Self, c: char) {
         io.formatln("char = '{}'", [c])
+
+        if c == 't' {
+            self.commands.push(.TabNext)
+        }
+
+        if c == 'n' {
+            self.commands.push(.TabPrev)
+        }
     }
 
     on_focus :: (&mut Self, focused: i32) {
@@ -198,12 +220,24 @@ impl Chim {
     initialize :: (&mut Self) {
         for row in 0 .. SLOTS_X {
             for col in 0 .. SLOTS_Y {
-                *self.slots[col + row * SLOTS_X] = Slot(u32('´'), .Comment)
+                *self.slots[col + row * SLOTS_X] = Slot('´', .Comment, .Background)
             }
         }
 
         self.set_font("FiraMono-Regular.ttf")
-        self.set_font_size(20)
+        self.set_font_size(18)
+
+        scratch_buffer := Buffer.scratch()
+        self.buffers.add(scratch_buffer.clone())
+
+        view := View.new(scratch_buffer.clone())
+
+        tab := Tab.new(view.clone())
+
+        tabs.add(tab.clone())
+        tabs.add(Tab.new(view.clone()))
+        tabs.add(Tab.new(view.clone()))
+        tabs.add(Tab.new(view.clone()))
     }
 
     get_window_dim :: (&Self) -> (rows: int, cols: int) {
@@ -222,6 +256,7 @@ impl Chim {
 
     update :: (&mut Self) {
         mut font_changed := false
+        mut rerender := false
 
         while self.commands.count() > 0 {
             match self.commands.pop() {
@@ -234,6 +269,14 @@ impl Chim {
                     self.current_font.clear()
                     fmt.format_into(&mut self.current_font, "fonts/{}", [path])
                     font_changed = true
+                }
+
+                .TabNext -> {
+                    self.active_tab = (self.active_tab + 1) % self.tabs.count()
+                }
+
+                .TabPrev -> {
+                    self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
                 }
             }
         }
@@ -248,30 +291,74 @@ impl Chim {
             self.character_size = font.CalcTextSizeA(self.font_size, f32.max, -1, "#", null, null)
         }
 
-        text := "xvlcwkhgfqß+ uiaeosnrtdy- üöäpzbm,.j {()}@``^ [<>]#=!- ~|&\$/`"'_ 0123456789 xvlcwkhgfqß+ uiaeosnrtdy- üöäpzbm,.j {()}@``^ [<>]#=!- ~|&\$/`"'_ 0123456789 xvlcwkhgfqß+ uiaeosnrtdy- üöäpzbm,.j {()}@``^ [<>]#=!- ~|&\$/`"'_ 0123456789 xvlcwkhgfqß+ uiaeosnrtdy- üöäpzbm,.j {()}@``^ [<>]#=!- ~|&\$/`"'_ 0123456789"
-        if self.update_every_frame {
-            for c in text {
-                if it_index >= 100 then break
-                self.set_text(0, it_index, text[byte_index..], .Number)
-            }
+        self.active_tab = self.active_tab.clamp(0, self.tabs.count() - 1)
+
+
+        // @temp
+        rerender = true
+
+        if rerender {
+            self.render_tab_bar()
         }
     }
 
-    set_text :: (&mut Self, x: int, y: int, text: string, col: PaletteIndex) {
-        rows, cols := self.get_window_dim()
-        if y < 0 or y >= rows or x < 0 {
+    render_tab_bar :: (&mut Self) {
+        if self.tabs.count() == 0 {
             return
         }
+
+        mut name_buffer := String.empty()
+
+        mut col := 0
+        for &tab in self.tabs[..] {
+            if it_index > 0 {
+                col = self.render_text_at(col, 0, "|", .Default, .MenuBackground)
+            }
+
+            view := tab.get().get_active_view()
+
+            name := match &view.get().buffer.get().file {
+                Some($name) -> name.slice()
+                None -> {
+                    name_buffer.clear()
+                    fmt.format_into(&mut name_buffer, "Untitled {}", [it_index])
+                    name_buffer.slice()
+                }
+            }
+
+            fg, bg := if it_index == self.active_tab {
+                PaletteIndex.Default, PaletteIndex.Selection
+            } else {
+                PaletteIndex.Default, PaletteIndex.MenuBackground
+            }
+
+            col = self.render_text_at(col, 0, name, fg, bg)
+        }
+
+        _, cols := self.get_window_dim()
+        for col .. cols {
+            *self.slots[it] = Slot(' ', .Default, .MenuBackground)
+        }
+    }
+
+    render_text_at :: (&mut Self, x: int, y: int, text: string, fg: PaletteIndex, bg: PaletteIndex) -> int {
+        rows, cols := self.get_window_dim()
+        if y < 0 or y >= rows or x < 0 {
+            return x
+        }
+
+        mut col := x
         for c in text {
-            if x + it_index >= cols {
+            if col >= cols {
                 break
             }
 
-            // io.formatln("{}, {}, {}", [it_index, byte_index, c])
+            slot := self.slots[col + y * SLOTS_X]
+            *slot = Slot(c, fg, bg)
 
-            slot := self.slots[(x + it_index) + y * SLOTS_X]
-            *slot = Slot(u32(c), col)
+            col += 1
         }
+        return col
     }
 
     render :: (&mut Self) {
@@ -301,7 +388,8 @@ impl Chim {
             for row in 0 .. rows {
                 for col in 0 .. cols {
                     slot := self.slots[col + row * SLOTS_X]
-                    fg = self.palette.get(slot.col)
+                    fg = self.palette.get(slot.fg)
+                    bg = self.palette.get(slot.bg)
 
                     pos_min := vec2(f32(col) * self.character_size.x + offset.x + border.x, f32(row) * self.character_size.y + offset.y + border.y)
                     pos_max := vec2(pos_min.x + self.character_size.x, pos_min.y + self.character_size.y)
@@ -311,7 +399,7 @@ impl Chim {
 
                     draw_list.AddRectFilled(&pos_min, &pos_max, bg, 0, .None)
 
-                    len := Utf8.encode_into(char(slot.c), utf8_bytes.data)
+                    len := Utf8.encode_into(slot.c, utf8_bytes.data)
                     *utf8_bytes[int(len)] = 0
                     draw_list.AddText(&pos_min, fg, cast utf8_bytes.data, null)
                 }
