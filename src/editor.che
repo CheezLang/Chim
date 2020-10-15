@@ -75,6 +75,9 @@ impl Buffer {
     scratch :: () -> Rc[Buffer] {
         lines := GapBuffer[BufferLine].new(100)
         lines.append(BufferLine.empty())
+        lines.append(BufferLine.from_string("uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae"))
+        lines.append(BufferLine.from_string("xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc"))
+        lines.append(BufferLine.from_string("nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd"))
         return Rc[Buffer].new(Buffer(
             file    = .None
             lines   = lines
@@ -168,9 +171,11 @@ LineNumberMode :: enum #copy {
 View :: struct {
     buffer      : Rc[Buffer]
 
-    line_number_mode := LineNumberMode.Absolute
     top_line    : int = 0
     cursor      := Position()
+
+    line_number_mode := LineNumberMode.RelativeCursor
+    wrapping_enabled := false
 }
 
 impl View {
@@ -183,7 +188,7 @@ impl View {
     }
 
     insert_char :: (&mut Self, text: char) {
-        self.clamp_or_wrap_cursor_position()
+        self.clamp_or_wrap_cursor_position(wrap=false)
         if text == '`n' {
             line := self.buffer.get().lines[self.cursor.line]
             text := line.get_text_from(self.cursor.column)
@@ -195,11 +200,11 @@ impl View {
             self.buffer.get_mut().insert_char(cursor.line, cursor.column, text)
             self.cursor.column += 1
         }
-        self.clamp_or_wrap_cursor_position()
+        self.clamp_or_wrap_cursor_position(wrap=true)
     }
 
     delete_at_cursor :: (&mut Self) {
-        self.clamp_or_wrap_cursor_position()
+        self.clamp_or_wrap_cursor_position(wrap=false)
         if self.cursor.column == 0 {
             if self.cursor.line > 0 {
                 text := self.buffer.get().lines[self.cursor.line].get_text()
@@ -214,21 +219,32 @@ impl View {
             self.cursor.column -= 1
             self.buffer.get_mut().erase_char(self.cursor.line, self.cursor.column)
         }
-        self.clamp_or_wrap_cursor_position()
+        self.clamp_or_wrap_cursor_position(wrap=true)
+    }
+
+    move_cursor_column_beginning :: (&mut Self) {
+        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor.column = 0
+    }
+
+    move_cursor_column_end :: (&mut Self) {
+        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor.column = self.buffer.get().lines[self.cursor.line].characters.count()
     }
 
     move_cursor_column :: (&mut Self, columns: int) {
-        cursor.column += columns
-        self.clamp_or_wrap_cursor_position()
+        self.cursor.column += columns
+        self.clamp_or_wrap_cursor_position(wrap=true)
     }
 
     move_cursor_line :: (&mut Self, lines: int) {
         cursor.line += lines
-        self.clamp_or_wrap_cursor_position()
+        self.clamp_or_wrap_cursor_position(wrap=false)
     }
 
-    clamp_or_wrap_cursor_position :: (&mut Self) {
-        if self.buffer.get().lines.count() == 0 {
+    clamp_or_wrap_cursor_position :: (&mut Self, wrap: bool) {
+        buffer := self.buffer.get()
+        if buffer.lines.count() == 0 {
             self.cursor.line = 0
             self.cursor.column = 0
         } else if self.cursor.line < 0 {
@@ -236,18 +252,18 @@ impl View {
             self.cursor.line = 0
 
             // clamp column
-            line := self.buffer.get().lines[self.cursor.line]
+            line := buffer.lines[self.cursor.line]
             if self.cursor.column < 0 {
                 self.cursor.column = 0
             } else if self.cursor.column > line.characters.count() {
                 self.cursor.column = line.characters.count()
             }
-        } else if self.cursor.line >= buffer.get().lines.count() {
+        } else if self.cursor.line >= buffer.lines.count() {
             // line past end, clamp line and column
-            self.cursor.line = self.buffer.get().lines.count() - 1
+            self.cursor.line = buffer.lines.count() - 1
 
             // clamp column
-            line := self.buffer.get().lines[self.cursor.line]
+            line := buffer.lines[self.cursor.line]
             if self.cursor.column < 0 {
                 self.cursor.column = 0
             } else if self.cursor.column > line.characters.count() {
@@ -255,19 +271,32 @@ impl View {
             }
         } else {
             // line is in range, wrap column
-            line := self.buffer.get().lines[self.cursor.line]
-            if self.cursor.column < 0 {
-                self.cursor.line -= 1
-                if self.cursor.line >= 0 {
-                    self.cursor.column += self.buffer.get().lines[self.cursor.line].characters.count()
+            line := buffer.lines[self.cursor.line]
+
+            if wrap {
+                if self.cursor.column < 0 {
+                    self.cursor.line -= 1
+                    if self.cursor.line >= 0 {
+                        self.cursor.column += buffer.lines[self.cursor.line].characters.count() + 1
+                    }
+                    self.clamp_or_wrap_cursor_position(wrap)
+                } else if self.cursor.column > line.characters.count() {
+                    if self.cursor.line < buffer.lines.count() - 1 {
+                        // move to next line and wrap
+                        self.cursor.column -= buffer.lines[self.cursor.line].characters.count() + 1
+                        self.cursor.line += 1
+                        self.clamp_or_wrap_cursor_position(wrap)
+                    } else {
+                        // clamp
+                        self.cursor.column = line.characters.count()
+                    }
                 }
-                self.clamp_or_wrap_cursor_position()
-            } else if self.cursor.column > line.characters.count() {
-                self.cursor.line += 1
-                if self.cursor.line < self.buffer.get().lines.count() {
-                    self.cursor.column -= self.buffer.get().lines[self.cursor.line].characters.count()
+            } else {
+                if self.cursor.column < 0 {
+                    self.cursor.column = 0
+                } else if self.cursor.column > line.characters.count() {
+                    self.cursor.column = line.characters.count()
                 }
-                self.clamp_or_wrap_cursor_position()
             }
         }
     }

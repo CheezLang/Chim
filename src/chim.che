@@ -249,6 +249,16 @@ impl Chim {
                         view := self.tabs[self.active_tab].get().get_active_view()
                         view.get_mut().insert_char('`n')
                     }
+
+                    None, Home -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_column_beginning()
+                    }
+
+                    None, End -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_column_end()
+                    }
                 }
                 if self.current_mods != .None {
                     io.formatln("key = '{}', scancode = '{}', action = '{}', mods = '{}'", [key, scancode, action, mods])
@@ -313,7 +323,7 @@ impl Chim {
         self.set_font("FiraMono-Regular.ttf")
         self.set_font_size(18)
 
-        
+
 
         self.current_buffer = Buffer.scratch()
         self.buffers.add(self.current_buffer.clone())
@@ -409,7 +419,7 @@ impl Chim {
         self.render_view(view.get(), min, max)
     }
 
-    render_view :: (&mut Self, view: &View, min: (col: int, row: int), max: (col: int, row: int)) {
+    render_view :: (&mut Self, view: &View, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int)) {
         count_digits :: (mut n: int) -> int {
             if n == 0 {
                 return 1
@@ -425,7 +435,17 @@ impl Chim {
         line_number_digits := 1 + match view.line_number_mode {
             .None -> 0
             .Absolute -> {
-                last_line_no := view.top_line + (max.row - min.row)
+                last_line_no := view.top_line + (bounds_max.row - bounds_min.row)
+                count_digits(last_line_no)
+            }
+            .RelativeCursor -> {
+                cursor_line_no  := view.cursor.line + 1
+                top_line_no     := view.cursor.line - view.top_line
+                bottom_line_no  := (view.top_line + bounds_max.row - bounds_min.row) - view.cursor.line
+                count_digits(max(cursor_line_no, max(top_line_no, bottom_line_no)))
+            }
+            .RelativeTop -> {
+                last_line_no := (bounds_max.row - bounds_min.row) + 1
                 count_digits(last_line_no)
             }
 
@@ -433,23 +453,97 @@ impl Chim {
         }
 
         buffer := view.buffer.get()
+        mut cursor_scroll := 0
 
-        for r in min.row .. max.row {
+        for r in bounds_min.row .. bounds_max.row {
             match buffer.get_line(view.top_line + it_index) {
                 Some($line) -> {
                     match view.line_number_mode {
                         .None -> {}
                         .Absolute -> {
                             line_no := view.top_line + it_index + 1
-                            self.render_line_number(min.col, r, line_no, line_number_digits)
+                            self.render_line_number(bounds_min.col, r, line_no, line_number_digits)
+                        }
+                        .RelativeCursor -> {
+                            actual_line := view.top_line + it_index
+                            line_no := if actual_line == view.cursor.line {
+                                actual_line + 1
+                            } else {
+                                (actual_line - view.cursor.line).abs()
+                            }
+                            self.render_line_number(bounds_min.col, r, line_no, line_number_digits)
+                        }
+                        .RelativeTop -> {
+                            line_no := r - bounds_min.row + 1
+                            self.render_line_number(bounds_min.col, r, line_no, line_number_digits)
                         }
 
                         _ -> {}
                     }
 
-                    for c in &line.characters {
-                        col := min.col + line_number_digits + it_index
-                        *self.slots[col + r * SLOTS_X] = Slot(c, .Default, .Background)
+                    cursor_line := view.top_line + it_index == view.cursor.line
+
+                    bounds : (cols: int, rows: int) = (bounds_max.col - bounds_min.col - line_number_digits, bounds_max.row - bounds_min.row)
+
+                    if line.characters.count() >= bounds.cols {
+                        // more chars in current line than space available
+                        if view.wrapping_enabled {
+
+                        } else {
+                            if cursor_line {
+                                // scroll just this line so that cursor is visible
+                                while view.cursor.column - cursor_scroll >= bounds.cols - 10 {
+                                    cursor_scroll += 1
+                                }
+
+                                mut offset_left := 0
+                                if cursor_scroll > 0 {
+                                    // display ... on beginning of line
+                                    offset_left = 3
+                                    for 0 .. 3 {
+                                        col := bounds_min.col + line_number_digits + it
+                                        *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, .Background)
+                                    }
+                                }
+
+                                mut offset_right := 0
+                                if line.characters.count() - cursor_scroll >= bounds.cols {
+                                    offset_right = 4
+                                }
+
+                                for offset_left .. (bounds.cols - offset_right) {
+                                    if it + cursor_scroll >= line.characters.count() {
+                                        break
+                                    }
+                                    col := bounds_min.col + line_number_digits + it
+                                    ch  := *line.characters[it + cursor_scroll]
+                                    *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, .Background)
+                                }
+
+                                // display ... on end of line
+                                for 1 .. offset_right {
+                                    col := bounds_max.col - offset_right + it_index
+                                    *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, .Background)
+                                }
+                            } else {
+                                for 0 .. (bounds_max.col - bounds_min.col - 4) {
+                                    col := bounds_min.col + line_number_digits + it
+                                    ch  := *line.characters[it]
+                                    *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, .Background)
+                                }
+
+                                // display ... on end of line
+                                for 0 .. 3 {
+                                    col := bounds_max.col - 4 + it_index
+                                    *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, .Background)
+                                }
+                            }
+                        }
+                    } else {
+                        for c in &line.characters {
+                            col := bounds_min.col + line_number_digits + it_index
+                            *self.slots[col + r * SLOTS_X] = Slot(c, .Default, .Background)
+                        }
                     }
                 }
 
@@ -465,7 +559,7 @@ impl Chim {
             .Insert -> CursorType.Line
             _       -> CursorType.Underscore
         }
-        self.render_cursor(view.cursor.column + min.col + line_number_digits, view.cursor.line + min.row, cursor_type)
+        self.render_cursor(view.cursor.column + bounds_min.col + line_number_digits - cursor_scroll, view.cursor.line + bounds_min.row, cursor_type)
     }
 
     render_cursor :: (&mut Self, col: int, row: int, typ: CursorType) {
@@ -503,6 +597,13 @@ impl Chim {
     }
 
     render_status_line :: (&mut Self, row: int) {
+        cols, _ := self.get_window_dim()
+
+        // fill line with menu background
+        for 0 .. cols {
+            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
+        }
+
         mut col := 0
         col = self.render_text_at(col, row, "[", .Default, .MenuBackground)
         match self.current_mode {
@@ -522,11 +623,11 @@ impl Chim {
         }
         col = self.render_text_at(col, row, "]", .Default, .MenuBackground)
 
-        // fill rest of line with menu background
-        cols, _ := self.get_window_dim()
-        for col .. cols {
-            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
-        }
+        tab := self.tabs[self.active_tab].get()
+        view := tab.get_active_view()
+        right_side := fmt.format("{}:{}   ", [view.get().cursor.line + 1, view.get().cursor.column + 1])
+        col = cols - right_side.get_length()
+        self.render_text_at(col, row, right_side.slice(), .Default, .MenuBackground)
     }
 
     render_tab_bar :: (&mut Self, row: int) {
