@@ -23,6 +23,43 @@ impl BufferLine {
             characters = GapBuffer[char].new(128)
         )
     }
+
+    from_string :: (text: string) -> BufferLine {
+        chars := GapBuffer[char].new(text.bytes.length * 2)
+        for c in text {
+            chars.append(c)
+        }
+        return BufferLine(
+            characters = chars
+        )
+    }
+
+    get_text :: (&Self) -> String {
+        text := String.with_capacity(self.characters.count())
+        for c in &self.characters {
+            text.append_char(c)
+        }
+        return text
+    }
+
+    get_text_from :: (&Self, index: int) -> String {
+        @assert(index <= self.characters.count())
+        text := String.with_capacity(self.characters.count() - index)
+        for c in &self.characters {
+            if it_index < index then continue
+            text.append_char(c)
+        }
+        return text
+    }
+
+    erase_from :: (&Self, index: int) {
+        @assert(index <= self.characters.count())
+
+        self.characters.move_gap(self.characters.count())
+        while self.characters.count() > index {
+            self.characters.truncate()
+        }
+    }
 }
 
 Buffer :: struct {
@@ -50,6 +87,18 @@ impl Buffer {
 
     get_line :: (&Self, line: int) -> Option[&BufferLine] {
         return if line >= 0 and line < self.lines.count() then Some(self.lines[line]) else None
+    }
+
+    append_string :: (&mut Self, line: int, text: string) -> int {
+        if line < 0 or line >= self.lines.count() {
+            io.formatln("[ERROR] trying to insert at {} into buffer with {} lines", [line, self.lines.count()])
+            return 0
+        }
+        return self.insert_string(line, self.lines[line].characters.count(), text)
+    }
+
+    insert_line :: (&mut Self, line: int, text: string) {
+        self.lines.insert(line, BufferLine.from_string(text))
     }
 
     insert_string :: (&mut Self, line: int, column: int, text: string) -> int {
@@ -83,6 +132,30 @@ impl Buffer {
         buffer_line.characters.move_gap(column)
         buffer_line.characters.append(text)
     }
+
+    erase_line :: (&mut Self, line: int) {
+        if line < 0 or line >= self.lines.count() {
+            io.formatln("[ERROR] trying to erase line {} in buffer with {} lines", [line, self.lines.count()])
+            return
+        }
+
+        self.lines.erase(line)
+        if self.lines.count() == 0 {
+            self.lines.insert(0, BufferLine.empty())
+        }
+    }
+
+    erase_char :: (&mut Self, line: int, column: int) {
+        if line < 0 or line >= self.lines.count() {
+            io.formatln("[ERROR] trying to erase char at {}:{} in buffer with {} lines", [line, column, self.lines.count()])
+            return
+        }
+
+        buffer_line := self.lines[line]
+        buffer_line.characters.erase(column)
+
+        return
+    }
 }
 
 LineNumberMode :: enum #copy {
@@ -110,8 +183,93 @@ impl View {
     }
 
     insert_char :: (&mut Self, text: char) {
-        self.buffer.get_mut().insert_char(cursor.line, cursor.column, text)
-        self.cursor.column += 1
+        self.clamp_or_wrap_cursor_position()
+        if text == '`n' {
+            line := self.buffer.get().lines[self.cursor.line]
+            text := line.get_text_from(self.cursor.column)
+            line.erase_from(self.cursor.column)
+            self.buffer.get_mut().insert_line(self.cursor.line + 1, text.slice())
+            self.cursor.line += 1
+            self.cursor.column = 0
+        } else {
+            self.buffer.get_mut().insert_char(cursor.line, cursor.column, text)
+            self.cursor.column += 1
+        }
+        self.clamp_or_wrap_cursor_position()
+    }
+
+    delete_at_cursor :: (&mut Self) {
+        self.clamp_or_wrap_cursor_position()
+        if self.cursor.column == 0 {
+            if self.cursor.line > 0 {
+                text := self.buffer.get().lines[self.cursor.line].get_text()
+                self.buffer.get_mut().erase_line(self.cursor.line)
+                self.cursor.line -= 1
+                self.cursor.column = self.buffer.get().lines[self.cursor.line].characters.count()
+                self.buffer.get_mut().append_string(self.cursor.line, text.slice())
+            } else {
+                // no point in doing anything
+            }
+        } else {
+            self.cursor.column -= 1
+            self.buffer.get_mut().erase_char(self.cursor.line, self.cursor.column)
+        }
+        self.clamp_or_wrap_cursor_position()
+    }
+
+    move_cursor_column :: (&mut Self, columns: int) {
+        cursor.column += columns
+        self.clamp_or_wrap_cursor_position()
+    }
+
+    move_cursor_line :: (&mut Self, lines: int) {
+        cursor.line += lines
+        self.clamp_or_wrap_cursor_position()
+    }
+
+    clamp_or_wrap_cursor_position :: (&mut Self) {
+        if self.buffer.get().lines.count() == 0 {
+            self.cursor.line = 0
+            self.cursor.column = 0
+        } else if self.cursor.line < 0 {
+            // line < 0, clamp line and column
+            self.cursor.line = 0
+
+            // clamp column
+            line := self.buffer.get().lines[self.cursor.line]
+            if self.cursor.column < 0 {
+                self.cursor.column = 0
+            } else if self.cursor.column > line.characters.count() {
+                self.cursor.column = line.characters.count()
+            }
+        } else if self.cursor.line >= buffer.get().lines.count() {
+            // line past end, clamp line and column
+            self.cursor.line = self.buffer.get().lines.count() - 1
+
+            // clamp column
+            line := self.buffer.get().lines[self.cursor.line]
+            if self.cursor.column < 0 {
+                self.cursor.column = 0
+            } else if self.cursor.column > line.characters.count() {
+                self.cursor.column = line.characters.count()
+            }
+        } else {
+            // line is in range, wrap column
+            line := self.buffer.get().lines[self.cursor.line]
+            if self.cursor.column < 0 {
+                self.cursor.line -= 1
+                if self.cursor.line >= 0 {
+                    self.cursor.column += self.buffer.get().lines[self.cursor.line].characters.count()
+                }
+                self.clamp_or_wrap_cursor_position()
+            } else if self.cursor.column > line.characters.count() {
+                self.cursor.line += 1
+                if self.cursor.line < self.buffer.get().lines.count() {
+                    self.cursor.column -= self.buffer.get().lines[self.cursor.line].characters.count()
+                }
+                self.clamp_or_wrap_cursor_position()
+            }
+        }
     }
 }
 

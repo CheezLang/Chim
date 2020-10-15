@@ -213,6 +213,42 @@ impl Chim {
                     None, Escape -> {
                         self.current_mode = .Normal
                     }
+
+                    None, Left -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_column(-1)
+                    }
+
+                    None, Right -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_column(1)
+                    }
+
+                    None, Up -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_line(-1)
+                    }
+
+                    None, Down -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_line(1)
+                    }
+
+                    None, Backspace -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().delete_at_cursor()
+                    }
+
+                    None, Delete -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_column(1)
+                        view.get_mut().delete_at_cursor()
+                    }
+
+                    None, Enter -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().insert_char('`n')
+                    }
                 }
                 if self.current_mods != .None {
                     io.formatln("key = '{}', scancode = '{}', action = '{}', mods = '{}'", [key, scancode, action, mods])
@@ -228,9 +264,7 @@ impl Chim {
     }
 
     on_char :: (&mut Self, c: char) {
-        io.formatln("char = '{}'", [c])
-
-
+        // io.formatln("char = '{}'", [c])
         match self.current_mode {
             .Normal -> {
                 if c == 'i' {
@@ -279,17 +313,19 @@ impl Chim {
         self.set_font("FiraMono-Regular.ttf")
         self.set_font_size(18)
 
+        
+
         self.current_buffer = Buffer.scratch()
         self.buffers.add(self.current_buffer.clone())
+        tabs.add(Tab.new(View.new(self.current_buffer.clone())))
 
-        view := View.new(self.current_buffer.clone())
+        buff2 := Buffer.scratch()
+        self.buffers.add(buff2.clone())
+        self.tabs.add(Tab.new(View.new(buff2)))
 
-        tab := Tab.new(view.clone())
-
-        tabs.add(tab.clone())
-        tabs.add(Tab.new(view.clone()))
-        tabs.add(Tab.new(view.clone()))
-        tabs.add(Tab.new(view.clone()))
+        buff3 := Buffer.scratch()
+        self.buffers.add(buff3.clone())
+        self.tabs.add(Tab.new(View.new(buff3)))
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {
