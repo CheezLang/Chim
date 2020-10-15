@@ -4,16 +4,30 @@ use import std.array
 use import std.gap_buffer
 use import std.string
 
+io :: import std.io
+
 #export_scope
+
+Position :: struct #copy {
+    line    : int = 0
+    column  : int = 0
+}
 
 BufferLine :: struct {
     characters : GapBuffer[char]
 }
 
+impl BufferLine {
+    empty :: () -> BufferLine {
+        return BufferLine(
+            characters = GapBuffer[char].new(128)
+        )
+    }
+}
+
 Buffer :: struct {
     file    : Option[String]
     lines   : GapBuffer[BufferLine]
-
 }
 
 impl Buffer {
@@ -22,9 +36,11 @@ impl Buffer {
     }
 
     scratch :: () -> Rc[Buffer] {
+        lines := GapBuffer[BufferLine].new(100)
+        lines.append(BufferLine.empty())
         return Rc[Buffer].new(Buffer(
             file    = .None
-            lines   = GapBuffer[BufferLine].new(100)
+            lines   = lines
         ))
     }
 
@@ -32,16 +48,70 @@ impl Buffer {
 
     }
 
-    
+    get_line :: (&Self, line: int) -> Option[&BufferLine] {
+        return if line >= 0 and line < self.lines.count() then Some(self.lines[line]) else None
+    }
+
+    insert_string :: (&mut Self, line: int, column: int, text: string) -> int {
+        // @todo: handle newline
+        if line < 0 or line >= self.lines.count() {
+            io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
+            return 0
+        }
+
+        buffer_line := self.lines[line]
+
+        buffer_line.characters.move_gap(column)
+
+        mut char_count := 0
+        for c in text {
+            buffer_line.characters.append(c)
+            char_count += 1
+        }
+        return char_count
+    }
+
+    insert_char :: (&mut Self, line: int, column: int, text: char) {
+        // @todo: handle newline
+        if line < 0 or line >= self.lines.count() {
+            io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
+            return
+        }
+
+        buffer_line := self.lines[line]
+
+        buffer_line.characters.move_gap(column)
+        buffer_line.characters.append(text)
+    }
+}
+
+LineNumberMode :: enum #copy {
+    None
+    Absolute
+    RelativeCursor
+    RelativeTop
 }
 
 View :: struct {
-    buffer : Rc[Buffer]
+    buffer      : Rc[Buffer]
+
+    line_number_mode := LineNumberMode.Absolute
+    top_line    : int = 0
+    cursor      := Position()
 }
 
 impl View {
     new :: (buffer: Rc[Buffer]) -> Rc[View] {
         return Rc[View].new(View(buffer))
+    }
+
+    insert_string :: (&mut Self, text: string) {
+        self.cursor.column += self.buffer.get_mut().insert_string(cursor.line, cursor.column, text)
+    }
+
+    insert_char :: (&mut Self, text: char) {
+        self.buffer.get_mut().insert_char(cursor.line, cursor.column, text)
+        self.cursor.column += 1
     }
 }
 

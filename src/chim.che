@@ -3,6 +3,7 @@ use import std.box
 use import std.string
 use import std.array
 use import std.ring_queue
+use import std.gap_buffer
 use import std.unicode
 
 mem :: import std.mem.allocator
@@ -112,8 +113,16 @@ Mode :: enum #copy {
     Visual
 }
 
+CursorType :: enum #copy {
+    Line
+    Full
+    Underscore
+}
+
 Chim :: struct {
     slots           : []mut Slot
+    
+    cursors         := Array[(col: int, row: int, typ: CursorType)].new()
     commands        := RingQueue[Command].new()
 
     // editor stuff
@@ -237,9 +246,11 @@ impl Chim {
 
             .Insert -> {
 
+                tab := self.tabs[self.active_tab].get()
+                view := tab.get_active_view()
+                view.get_mut().insert_char(c)
             }
         }
-
     }
 
     on_focus :: (&mut Self, focused: i32) {
@@ -356,6 +367,93 @@ impl Chim {
                 *self.slots[c + r * SLOTS_X] = Slot(' ', .Default, .Background)
             }
         }
+
+        // @todo: handle multiple views
+        view := tab.get_active_view()
+        self.render_view(view.get(), min, max)
+    }
+
+    render_view :: (&mut Self, view: &View, min: (col: int, row: int), max: (col: int, row: int)) {
+        count_digits :: (mut n: int) -> int {
+            if n == 0 {
+                return 1
+            }
+            mut count := 0
+            while n != 0 {
+                n = n / 10
+                count += 1
+            }
+            return count
+        }
+
+        line_number_digits := 1 + match view.line_number_mode {
+            .None -> 0
+            .Absolute -> {
+                last_line_no := view.top_line + (max.row - min.row)
+                count_digits(last_line_no)
+            }
+
+            _ -> 0
+        }
+
+        buffer := view.buffer.get()
+
+        for r in min.row .. max.row {
+            match buffer.get_line(view.top_line + it_index) {
+                Some($line) -> {
+                    match view.line_number_mode {
+                        .None -> {}
+                        .Absolute -> {
+                            line_no := view.top_line + it_index + 1
+                            self.render_line_number(min.col, r, line_no, line_number_digits)
+                        }
+
+                        _ -> {}
+                    }
+
+                    for c in &line.characters {
+                        col := min.col + line_number_digits + it_index
+                        *self.slots[col + r * SLOTS_X] = Slot(c, .Default, .Background)
+                    }
+                }
+
+                None -> break
+            }
+
+        }
+
+        // render cursor
+        cursor_type := match self.current_mode {
+            .Normal -> CursorType.Full
+            .Visual -> CursorType.Full
+            .Insert -> CursorType.Line
+            _       -> CursorType.Underscore
+        }
+        self.render_cursor(view.cursor.column + min.col + line_number_digits, view.cursor.line + min.row, cursor_type)
+    }
+
+    render_cursor :: (&mut Self, col: int, row: int, typ: CursorType) {
+        self.cursors.add((col, row, typ))
+    }
+
+    render_line_number :: (&mut Self, col: int, row: int, number: int, align: int) {
+        count_digits :: (mut n: int) -> int {
+            if n == 0 {
+                return 1
+            }
+            mut count := 0
+            while n != 0 {
+                n = n / 10
+                count += 1
+            }
+            return count
+        }
+        digits := count_digits(number)
+        for 0 .. (align - digits) {
+            self.render_text_at(col + it_index, row, " ", .Default, .MenuBackground)
+        }
+        line_no_string := fmt.format("{}", [number])
+        self.render_text_at(col + align - digits, row, line_no_string.slice(), .Default, .MenuBackground)
     }
 
     render_command_line :: (&mut Self, row: int) {
@@ -501,6 +599,29 @@ impl Chim {
                     draw_list.AddText(&pos_min, fg, cast utf8_bytes.data, null)
                 }
             }
+
+            // render cursors
+            for &c in self.cursors[..] {
+                match c.typ {
+                    .Line -> {
+                        p1 := vec2(f32(c.col), f32(c.row)) * scaled_size + offset
+                        p2 := p1 + vec2(0, scaled_size.y)
+                        draw_list.AddLine(&p1, &p2, self.palette.get(.Cursor), scaled_size.x * 0.1f)
+                    }
+                    .Full -> {
+                        p1 := vec2(f32(c.col), f32(c.row)) * scaled_size + offset
+                        p2 := p1 + scaled_size
+                        draw_list.AddRectFilled(&p1, &p2, self.palette.get(.Cursor), 0, .None)
+                    }
+                    .Underscore -> {
+                        p1 := vec2(f32(c.col), f32(c.row) + 0.95f) * scaled_size + offset
+                        p2 := p1 + vec2(scaled_size.x, 0)
+                        draw_list.AddLine(&p1, &p2, self.palette.get(.Cursor), scaled_size.y * 0.1f)
+                    }
+                }
+            }
+
+            self.cursors.clear()
 
             // @assert(false)
         }
