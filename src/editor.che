@@ -74,10 +74,14 @@ impl Buffer {
 
     scratch :: () -> Rc[Buffer] {
         lines := GapBuffer[BufferLine].new(100)
-        lines.append(BufferLine.empty())
-        lines.append(BufferLine.from_string("uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae"))
-        lines.append(BufferLine.from_string("xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc"))
-        lines.append(BufferLine.from_string("nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd"))
+
+        for 0 .. 50 {
+            lines.append(BufferLine.empty())
+            lines.append(BufferLine.from_string("uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae uiae"))
+            lines.append(BufferLine.from_string("xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc xvlc"))
+            lines.append(BufferLine.from_string("nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrt nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrt nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrtd nrt nrtd nrtd"))
+            lines.append(BufferLine.from_string("hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq hgfq"))
+        }
         return Rc[Buffer].new(Buffer(
             file    = .None
             lines   = lines
@@ -174,13 +178,25 @@ View :: struct {
     top_line    : int = 0
     cursor      := Position()
 
-    line_number_mode := LineNumberMode.RelativeCursor
-    wrapping_enabled := false
+    line_number_mode    := LineNumberMode.RelativeCursor
+    wrapping_enabled    := Option[bool].None
+    highlight_curr_line := Option[bool].None
 }
 
 impl View {
     new :: (buffer: Rc[Buffer]) -> Rc[View] {
         return Rc[View].new(View(buffer))
+    }
+
+    scroll_to_cursor :: (&mut Self, cols: int, rows: int, margin: int) {
+        if self.cursor.line - self.top_line >= rows - margin - 1 {
+            self.top_line = self.cursor.line - rows + margin + 1
+        } else if self.cursor.line - self.top_line < margin {
+            self.top_line = self.cursor.line - margin
+        }
+        if self.top_line < 0 {
+            self.top_line = 0
+        }
     }
 
     insert_string :: (&mut Self, text: string) {
