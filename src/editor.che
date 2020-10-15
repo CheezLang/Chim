@@ -1,12 +1,18 @@
 use import std.rc
 use import std.box
 use import std.array
+use import std.gap_buffer
 use import std.string
 
 #export_scope
 
+BufferLine :: struct {
+    characters : GapBuffer[char]
+}
+
 Buffer :: struct {
-    file : Option[String]
+    file    : Option[String]
+    lines   : GapBuffer[BufferLine]
 
 }
 
@@ -17,13 +23,16 @@ impl Buffer {
 
     scratch :: () -> Rc[Buffer] {
         return Rc[Buffer].new(Buffer(
-            file = .None
+            file    = .None
+            lines   = GapBuffer[BufferLine].new(100)
         ))
     }
 
     save :: (&Self) {
 
     }
+
+    
 }
 
 View :: struct {

@@ -6,4 +6,8 @@ impl ImVec2 {
     add :: (a: Self, b: Self) -> Self #operator("+") {
         return Self(a.x + b.x, a.y + b.y)
     }
+
+    mul_f :: (a: Self, b: f32) -> Self #operator("*") {
+        return Self(a.x * b, a.y * b)
+    }
 }

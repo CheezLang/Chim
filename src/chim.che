@@ -106,13 +106,24 @@ impl Palette {
     }
 }
 
+Mode :: enum #copy {
+    Normal
+    Insert
+    Visual
+}
+
 Chim :: struct {
     slots           : []mut Slot
     commands        := RingQueue[Command].new()
 
     // editor stuff
+    current_mode    := Mode.Normal
+    recording_macro := false
+
     tabs            := Array[Rc[Tab]].new()
     buffers         := Array[Rc[Buffer]].new()
+
+    current_buffer  := Rc[Buffer].empty()
 
     active_tab      := 0
 
@@ -131,7 +142,9 @@ Chim :: struct {
     // theme stuff
     palette         := Palette.dark()
 
-    update_every_frame := true
+    // debug stuff
+    show_debug_window := false
+    show_demo_window := false
 }
 
 impl Drop for Chim {
@@ -179,10 +192,26 @@ impl Chim {
             Press, RightSuper       -> { current_mods_r = current_mods_r or Super }
             Release, RightSuper     -> { current_mods_r = current_mods_r and !Super }
 
-            _, _ -> {
-                if action != .Repeat {
+            Press, F1               -> {
+                self.show_debug_window = !self.show_debug_window
+            }
+
+            Press, F2               -> {
+                self.show_demo_window = !self.show_demo_window
+            }
+            Press, _ -> {
+                match self.current_mods, key {
+                    None, Escape -> {
+                        self.current_mode = .Normal
+                    }
+                }
+                if self.current_mods != .None {
                     io.formatln("key = '{}', scancode = '{}', action = '{}', mods = '{}'", [key, scancode, action, mods])
                 }
+            }
+
+            _ -> {
+
             }
         }
 
@@ -192,13 +221,25 @@ impl Chim {
     on_char :: (&mut Self, c: char) {
         io.formatln("char = '{}'", [c])
 
-        if c == 't' {
-            self.commands.push(.TabNext)
+
+        match self.current_mode {
+            .Normal -> {
+                if c == 'i' {
+                    self.current_mode = .Insert
+                }
+                if c == 't' {
+                    self.commands.push(.TabNext)
+                }
+                if c == 'n' {
+                    self.commands.push(.TabPrev)
+                }
+            }
+
+            .Insert -> {
+
+            }
         }
 
-        if c == 'n' {
-            self.commands.push(.TabPrev)
-        }
     }
 
     on_focus :: (&mut Self, focused: i32) {
@@ -227,10 +268,10 @@ impl Chim {
         self.set_font("FiraMono-Regular.ttf")
         self.set_font_size(18)
 
-        scratch_buffer := Buffer.scratch()
-        self.buffers.add(scratch_buffer.clone())
+        self.current_buffer = Buffer.scratch()
+        self.buffers.add(self.current_buffer.clone())
 
-        view := View.new(scratch_buffer.clone())
+        view := View.new(self.current_buffer.clone())
 
         tab := Tab.new(view.clone())
 
@@ -240,10 +281,10 @@ impl Chim {
         tabs.add(Tab.new(view.clone()))
     }
 
-    get_window_dim :: (&Self) -> (rows: int, cols: int) {
+    get_window_dim :: (&Self) -> (cols: int, rows: int) {
         cols := int(self.window_pixel_size.x / self.character_size.x)
         rows := int(self.window_pixel_size.y / self.character_size.y)
-        return rows, cols
+        return (cols + 1), rows
     }
 
     set_font :: (&mut Self, path: string) {
@@ -298,11 +339,63 @@ impl Chim {
         rerender = true
 
         if rerender {
-            self.render_tab_bar()
+            cols, rows := self.get_window_dim()
+
+            self.render_tab_bar(0)
+
+            self.render_tab(self.tabs[self.active_tab].get(), (0, 1), (cols, rows - 2))
+
+            self.render_status_line(rows - 2)
+            self.render_command_line(rows - 1)
         }
     }
 
-    render_tab_bar :: (&mut Self) {
+    render_tab :: (&mut Self, tab: &Tab, min: (col: int, row: int), max: (col: int, row: int)) {
+        for r in min.row .. max.row {
+            for c in min.col .. max.col {
+                *self.slots[c + r * SLOTS_X] = Slot(' ', .Default, .Background)
+            }
+        }
+    }
+
+    render_command_line :: (&mut Self, row: int) {
+        mut col := 0
+
+        // fill rest of line with menu background
+        cols, _ := self.get_window_dim()
+        for col .. cols {
+            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
+        }
+    }
+
+    render_status_line :: (&mut Self, row: int) {
+        mut col := 0
+        col = self.render_text_at(col, row, "[", .Default, .MenuBackground)
+        match self.current_mode {
+            .Normal -> {
+                col = self.render_text_at(col, row, "NORMAL", .Default, .MenuBackground)
+            }
+
+            .Insert -> {
+                col = self.render_text_at(col, row, "INSERT", .Default, .MenuBackground)
+            }
+
+            .Visual -> {
+                col = self.render_text_at(col, row, "VISUAL", .Default, .MenuBackground)
+            }
+
+            _ -> {}
+        }
+        col = self.render_text_at(col, row, "]", .Default, .MenuBackground)
+
+        // fill rest of line with menu background
+        cols, _ := self.get_window_dim()
+        for col .. cols {
+            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
+        }
+    }
+
+    render_tab_bar :: (&mut Self, row: int) {
         if self.tabs.count() == 0 {
             return
         }
@@ -312,7 +405,7 @@ impl Chim {
         mut col := 0
         for &tab in self.tabs[..] {
             if it_index > 0 {
-                col = self.render_text_at(col, 0, "|", .Default, .MenuBackground)
+                col = self.render_text_at(col, row, "|", .Default, .MenuBackground)
             }
 
             view := tab.get().get_active_view()
@@ -332,17 +425,17 @@ impl Chim {
                 PaletteIndex.Default, PaletteIndex.MenuBackground
             }
 
-            col = self.render_text_at(col, 0, name, fg, bg)
+            col = self.render_text_at(col, row, name, fg, bg)
         }
 
-        _, cols := self.get_window_dim()
+        cols, _ := self.get_window_dim()
         for col .. cols {
-            *self.slots[it] = Slot(' ', .Default, .MenuBackground)
+            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
         }
     }
 
     render_text_at :: (&mut Self, x: int, y: int, text: string, fg: PaletteIndex, bg: PaletteIndex) -> int {
-        rows, cols := self.get_window_dim()
+        cols, rows := self.get_window_dim()
         if y < 0 or y >= rows or x < 0 {
             return x
         }
@@ -376,10 +469,14 @@ impl Chim {
         self.window_pixel_size = imgui.GetContentRegionAvail()
 
         if self.character_size.x != 0 and self.character_size.y != 0 {
-            rows, cols := self.get_window_dim()
+            cols, rows := self.get_window_dim()
 
             offset := imgui.GetWindowContentRegionMin() + imgui.GetWindowPos()
-            border := vec2((window_pixel_size.x - f32(cols) * self.character_size.x) * 0.5, (window_pixel_size.y - f32(rows) * self.character_size.y) * 0.5)
+
+            scale := self.window_pixel_size.y / (self.character_size.y * f32(rows))
+            scaled_size := self.character_size * scale
+
+            imgui.SetWindowFontScale(scale)
 
             mut bg : u32 = self.palette.get(.Background)
             mut fg : u32 = 0xff000000
@@ -391,8 +488,8 @@ impl Chim {
                     fg = self.palette.get(slot.fg)
                     bg = self.palette.get(slot.bg)
 
-                    pos_min := vec2(f32(col) * self.character_size.x + offset.x + border.x, f32(row) * self.character_size.y + offset.y + border.y)
-                    pos_max := vec2(pos_min.x + self.character_size.x, pos_min.y + self.character_size.y)
+                    pos_min := vec2(f32(col) * scaled_size.x + offset.x, f32(row) * scaled_size.y + offset.y)
+                    pos_max := vec2(pos_min.x + scaled_size.x, pos_min.y + scaled_size.y)
 
                     // io.formatln("{}, {}", [pos_min, slot])
                     // break
@@ -410,35 +507,39 @@ impl Chim {
     }
 
     debug_render :: (&mut Self, delta_time: f64, fps: int) {
-        imgui.Begin("Debug", null, .None)
-        defer imgui.End()
+        if show_demo_window then
+            imgui.ShowDemoWindow(^mut show_demo_window)
 
-        // show states of modifiers
-        mut control := GlfwMod.Control is in current_mods
-        imgui.Checkbox("Control", ^mut control)
-        mut shift := GlfwMod.Shift is in current_mods
-        imgui.Checkbox("Shift", ^mut shift)
-        mut alt := GlfwMod.Alt is in current_mods
-        imgui.Checkbox("Alt", ^mut alt)
-        mut super := GlfwMod.Super is in current_mods
-        imgui.Checkbox("Super", ^mut super)
+        if show_debug_window {
 
-        imgui.Separator()
+            imgui.Begin("Debug", null, .None)
+            defer imgui.End()
 
-        delta_time_str := fmt.format_any(delta_time)
-        imgui.LabelText("Frame duration", delta_time_str.as_cstring())
-        fps_counted_str := fmt.format_any(fps)
-        imgui.LabelText("Fps", fps_counted_str.as_cstring())
+            // show states of modifiers
+            mut control := GlfwMod.Control is in current_mods
+            imgui.Checkbox("Control", ^mut control)
+            mut shift := GlfwMod.Shift is in current_mods
+            imgui.Checkbox("Shift", ^mut shift)
+            mut alt := GlfwMod.Alt is in current_mods
+            imgui.Checkbox("Alt", ^mut alt)
+            mut super := GlfwMod.Super is in current_mods
+            imgui.Checkbox("Super", ^mut super)
 
-        imgui.Separator()
+            imgui.Separator()
 
-        mut font_size := self.font_size
-        if imgui.DragFloat("Font size", ^mut font_size, 1.0f, 10.0f, 90.0f, "%.1f", .None) {
-            self.set_font_size(font_size)
+            delta_time_str := fmt.format_any(delta_time)
+            imgui.LabelText("Frame duration", delta_time_str.as_cstring())
+            fps_counted_str := fmt.format_any(fps)
+            imgui.LabelText("Fps", fps_counted_str.as_cstring())
+
+            imgui.Separator()
+
+            mut font_size := self.font_size
+            if imgui.DragFloat("Font size", ^mut font_size, 1.0f, 10.0f, 90.0f, "%.1f", .None) {
+                self.set_font_size(font_size)
+            }
+
+            imgui.BringWindowToDisplayFront(imgui.GetCurrentContext().CurrentWindow)
         }
-
-        imgui.Checkbox("Update every frame", ^mut self.update_every_frame)
-
-        imgui.BringWindowToDisplayFront(imgui.GetCurrentContext().CurrentWindow)
     }
 }
