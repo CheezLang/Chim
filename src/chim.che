@@ -3,7 +3,6 @@ use import std.box
 use import std.string
 use import std.array
 use import std.ring_queue
-use import std.gap_buffer
 use import std.unicode
 
 mem :: import std.mem.allocator
@@ -19,6 +18,7 @@ use import imgui_opengl
 imgui :: import imgui
 
 use import editor
+use import gap_buffer
 
 vec2 :: imgui.ImVec2
 vec4 :: imgui.ImVec4

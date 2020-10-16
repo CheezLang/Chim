@@ -1,13 +1,14 @@
 use import std.rc
 use import std.box
 use import std.array
-use import std.gap_buffer
 use import std.string
 use import std.mem.arena_allocator
 
 mem :: import std.mem.allocator
 io :: import std.io
 fs :: import std.io.fs
+
+use import gap_buffer
 
 #export_scope
 
@@ -21,16 +22,16 @@ BufferLine :: struct {
 }
 
 impl BufferLine {
-    empty :: (allocator: ^mem.Allocator) -> BufferLine {
+    empty :: (allocator: &mem.Allocator) -> BufferLine {
         return BufferLine(
             characters = GapBuffer[char].new(128, allocator)
         )
     }
 
-    from_string :: (text: string, allocator: ^mem.Allocator) -> BufferLine {
+    from_string :: (text: string, allocator: &mem.Allocator) -> BufferLine {
         chars := GapBuffer[char].new(text.bytes.length, allocator)
         for c in text {
-            chars.append(c)
+            chars.append(c, allocator)
         }
         return BufferLine(
             characters = chars
@@ -77,12 +78,13 @@ impl Buffer {
 
         megs := 1 + u64(text.get_length()) / (1024 * 1024 * 10)
         arena := Rc[ArenaAllocator].new(ArenaAllocator.new(1024 * 1024 * megs))
+        allocator : &mem.Allocator = arena.get()
 
         // assume around 15 characters per line
-        mut lines := GapBuffer[BufferLine].new(text.get_length() / 15, ^*arena.get())
+        mut lines := GapBuffer[BufferLine].new(text.get_length() / 15, allocator)
 
         for line in text.slice().lines() {
-            lines.append(BufferLine.from_string(line, ^*arena.get()))
+            lines.append(BufferLine.from_string(line, allocator), allocator)
         }
 
         return Ok(Rc[Buffer].new(Buffer(
@@ -94,9 +96,9 @@ impl Buffer {
 
     scratch :: () -> Rc[Buffer] {
         arena := Rc[ArenaAllocator].new(ArenaAllocator.new(1024 * 1024))
-        lines := GapBuffer[BufferLine].new(100, ^*arena.get())
+        lines := GapBuffer[BufferLine].new(100, arena.get())
 
-        lines.append(BufferLine.empty(^*arena.get()))
+        lines.append(BufferLine.empty(arena.get()), arena.get())
         return Rc[Buffer].new(Buffer(
             allocator   = arena
             file        = .None
@@ -135,7 +137,7 @@ impl Buffer {
     }
 
     insert_line :: (&mut Self, line: int, text: string) {
-        self.lines.insert(line, BufferLine.from_string(text, ^*self.allocator.get()))
+        self.lines.insert(line, BufferLine.from_string(text, self.allocator.get()), self.allocator.get())
     }
 
     insert_string :: (&mut Self, line: int, column: int, text: string) -> int {
@@ -151,7 +153,7 @@ impl Buffer {
 
         mut char_count := 0
         for c in text {
-            buffer_line.characters.append(c)
+            buffer_line.characters.append(c, self.allocator.get())
             char_count += 1
         }
         return char_count
@@ -167,7 +169,7 @@ impl Buffer {
         buffer_line := self.lines[line]
 
         buffer_line.characters.move_gap(column)
-        buffer_line.characters.append(text)
+        buffer_line.characters.append(text, self.allocator.get())
     }
 
     erase_line :: (&mut Self, line: int) {
@@ -178,7 +180,7 @@ impl Buffer {
 
         self.lines.erase(line)
         if self.lines.count() == 0 {
-            self.lines.insert(0, BufferLine.empty(^*self.allocator.get()))
+            self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
         }
     }
 
