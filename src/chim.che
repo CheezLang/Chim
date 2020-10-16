@@ -616,7 +616,7 @@ impl Chim {
                             prev := if index > 0 then *line.characters[index - 1] else '`0'
                             next := if index + 1 < line.characters.count() then *line.characters[index + 1] else ' '
                             return match c {
-                                ' '  -> if next == ' ' or prev == ' ' then ' ' else '`0'
+                                ' '  -> if next == ' ' or next  == '`t' or prev == ' ' or prev == '`t' then ' ' else '`0'
                                 '`t' -> '`t'
                                 $c  -> c
                             }
@@ -723,6 +723,16 @@ impl Chim {
                                         actual_col := bounds_min.col + line_number_digits + col
                                         c := if show_whitespace then '`t' else '`0'
                                         *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
+
+                                        // shift all cursors on this line
+                                        if it_index > 0 {
+                                            for &mut cursor in visual_cursors.slice_mut() {
+                                                if cursor.actual.line == line_index and cursor.visual.column >= col {
+                                                    cursor.visual.column += 1
+                                                }
+                                            }
+                                        }
+
                                         col += 1
                                     }
                                 }
