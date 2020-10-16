@@ -383,9 +383,11 @@ impl Chim {
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {
-        cols := int(self.window_pixel_size.x / self.character_size.x)
         rows := int(self.window_pixel_size.y / self.character_size.y)
-        return (cols + 1), rows
+
+        mut scale := self.character_size.x * (self.window_pixel_size.y / (self.character_size.y * f32(rows)))
+
+        return int(self.window_pixel_size.x / scale), rows
     }
 
     set_font :: (&mut Self, path: string) {
@@ -443,6 +445,11 @@ impl Chim {
 
         if rerender {
             cols, rows := self.get_window_dim()
+
+            // clear right-most column
+            for r in 0 .. rows {
+                *self.slots[cols + r * SLOTS_X] = Slot('`0', .Default, .Background)
+            }
 
             self.render_tab_bar(0)
 
@@ -634,7 +641,7 @@ impl Chim {
                         if wrapping_enabled {
                             mut col := 0
                             for 0 .. line.characters.count() {
-                                if col >= bounds.cols - 1 {
+                                if col >= bounds.cols {
                                     // fill rest of column with background color
                                     for bounds_min.col + line_number_digits + col .. bounds_max.col {
                                         *self.slots[it + r * SLOTS_X] = Slot('`0', .Default, bg)
@@ -645,9 +652,9 @@ impl Chim {
                                     for &mut cursor in visual_cursors.slice_mut() {
                                         if cursor.actual.line > line_index {
                                             cursor.visual.line += 1
-                                        } else if cursor.actual.line == line_index and cursor.visual.column >= bounds.cols - 1 {
+                                        } else if cursor.actual.line == line_index and cursor.visual.column >= bounds.cols {
                                             cursor.visual.line += 1
-                                            cursor.visual.column -= bounds.cols - 1
+                                            cursor.visual.column -= bounds.cols
                                         }
                                     }
                                 }
@@ -682,7 +689,7 @@ impl Chim {
 
                                 mut offset_right := 0
                                 if line.characters.count() - cursor_scroll >= bounds.cols {
-                                    offset_right = 4
+                                    offset_right = 3
                                 }
 
                                 for offset_left .. (bounds.cols - offset_right) {
@@ -695,12 +702,12 @@ impl Chim {
                                 }
 
                                 // display ... on end of line
-                                for 1 .. offset_right {
+                                for 0 .. offset_right {
                                     col := bounds_max.col - offset_right + it_index
                                     *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, bg)
                                 }
                             } else {
-                                for 0 .. (bounds_max.col - bounds_min.col - 4) {
+                                for 0 .. (bounds_max.col - bounds_min.col - 3) {
                                     col := bounds_min.col + line_number_digits + it
                                     ch  := *line.characters[it]
                                     *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, bg)
@@ -708,7 +715,7 @@ impl Chim {
 
                                 // display ... on end of line
                                 for 0 .. 3 {
-                                    col := bounds_max.col - 4 + it_index
+                                    col := bounds_max.col - 3 + it_index
                                     *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, bg)
                                 }
                             }
@@ -833,7 +840,7 @@ impl Chim {
 
         tab := self.tabs[self.active_tab].get()
         view := tab.get_active_view()
-        right_side := fmt.format("{}:{}   ", [view.get().cursor.line + 1, view.get().cursor.column + 1])
+        right_side := fmt.format("{}:{}", [view.get().cursor.line + 1, view.get().cursor.column + 1])
         col = cols - right_side.get_length()
         self.render_text_at(col, row, right_side.slice(), .Default, .MenuBackground)
     }
@@ -914,18 +921,27 @@ impl Chim {
         self.window_pixel_size = imgui.GetContentRegionAvail()
 
         if self.character_size.x != 0 and self.character_size.y != 0 {
-            cols, rows := self.get_window_dim()
+            mut cols, rows := self.get_window_dim()
+            cols += 1
 
             offset := imgui.GetWindowContentRegionMin() + imgui.GetWindowPos()
 
-            scale := self.window_pixel_size.y / (self.character_size.y * f32(rows))
+            mut scale := self.window_pixel_size.y / (self.character_size.y * f32(rows))
             scaled_size := self.character_size * scale
+            
+            //io.formatln("{} -> {}", [cols, self.window_pixel_size.x / scaled_size.x])
 
             imgui.SetWindowFontScale(scale)
 
             mut bg : u32 = self.palette.get(.Background)
             mut fg : u32 = 0xff000000
             mut utf8_bytes : [5]u8 = [0, 0, 0, 0, 0]
+
+            // copy background color of last column to next column
+            for row in 0 .. rows {
+                self.slots[cols - 1 + row * SLOTS_X].c = '`0'
+                self.slots[cols - 1 + row * SLOTS_X].bg = self.slots[cols - 2 + row * SLOTS_X].bg
+            }
 
             // change colors of slots under full curser
             for &c in self.cursors[..] {
