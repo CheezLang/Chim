@@ -11,12 +11,12 @@
         {
             "label": "build_and_run",
             "type": "shell",
-            "command": "./build.ps1; ./bin/chim.exe"
+            "command": "./build.ps1; ./bin/chim.exe ./src/chim.che ./src/editor.che"
         },
         {
             "label": "run",
             "type": "shell",
-            "command": "./bin/chim.exe"
+            "command": "./bin/chim.exe ./test_data/chim.che ./test_data/editor.che"
         }
     ]
 }
