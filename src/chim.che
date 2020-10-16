@@ -35,6 +35,7 @@ Slot :: struct {
     c   : char
     fg  : PaletteIndex
     bg  : PaletteIndex
+    col : int = 0
 }
 
 PaletteIndex :: enum #tag_type(i32) #copy {
@@ -102,7 +103,7 @@ impl Palette {
         *values[int(PaletteIndex.CurrentLineFill)]              = 0x40000000
         *values[int(PaletteIndex.CurrentLineFillInactive)]      = 0x40808080
         *values[int(PaletteIndex.CurrentLineEdge)]              = 0x40a0a0a0
-        *values[int(PaletteIndex.Whitespace)]                   = 0x30a0a0a0
+        *values[int(PaletteIndex.Whitespace)]                   = 0xff202020
         return Palette(values)
     }
 
@@ -141,12 +142,14 @@ Chim :: struct {
     active_tab      := 0
 
     window_pixel_size := vec2(0, 0)
+    has_focus       := false
 
     // settings
     wrapping_enabled    := true
     highlight_curr_line := true
     line_number_mode    := LineNumberMode.RelativeCursor
     show_whitespace     := true
+    tab_width           := 4
 
     // modifiers, keys, etc.
     current_mods_l  := GlfwMod.None
@@ -187,6 +190,9 @@ impl Chim {
     }
 
     on_key :: (&mut Self, key: GlfwKey, scancode: i32, action: GlfwAction, mods: GlfwMod) {
+        if !self.has_focus {
+            return
+        }
         match action, key {
             use GlfwKey
             use GlfwAction
@@ -271,6 +277,16 @@ impl Chim {
                         view.get_mut().move_cursor_column_end()
                     }
 
+                    Control, Home -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_beginning()
+                    }
+
+                    Control, End -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().move_cursor_end()
+                    }
+
                     Control, S -> {
                         try_with(self.current_buffer.get().write_to_disk(), {
                             io.formatln("[ERROR] {}", [&err])
@@ -291,6 +307,9 @@ impl Chim {
     }
 
     on_char :: (&mut Self, c: char) {
+        if !self.has_focus {
+            return
+        }
         // io.formatln("char = '{}'", [c])
         match self.current_mode {
             .Normal -> {
@@ -484,6 +503,7 @@ impl Chim {
         highlight_curr_line := view.highlight_curr_line.unwrap_or(self.highlight_curr_line)
         line_number_mode    := view.line_number_mode.unwrap_or(self.line_number_mode)
         show_whitespace     := view.show_whitespace.unwrap_or(self.show_whitespace)
+        tab_width           := view.tab_width.unwrap_or(self.tab_width)
 
         count_digits :: (mut n: int) -> int {
             if n == 0 {
@@ -597,7 +617,7 @@ impl Chim {
                             next := if index + 1 < line.characters.count() then *line.characters[index + 1] else ' '
                             return match c {
                                 ' '  -> if next == ' ' or prev == ' ' then ' ' else '`0'
-                                '`t' -> ' '
+                                '`t' -> '`t'
                                 $c  -> c
                             }
                         } else {
@@ -694,10 +714,26 @@ impl Chim {
                             }
                         }
                     } else {
+                        mut col := 0
                         for 0 .. line.characters.count() {
-                            c := handle_show_whitespace(it_index, line, show_whitespace)
-                            col := bounds_min.col + line_number_digits + it_index
-                            *self.slots[col + r * SLOTS_X] = Slot(c, .Default, bg)
+                            match *line.characters[it_index] {
+                                '`t' -> {
+                                    required_spaces := tab_width - col % tab_width
+                                    for 0 .. required_spaces {
+                                        actual_col := bounds_min.col + line_number_digits + col
+                                        c := if show_whitespace then '`t' else '`0'
+                                        *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
+                                        col += 1
+                                    }
+                                }
+
+                                _ -> {
+                                    c := handle_show_whitespace(it_index, line, show_whitespace)
+                                    actual_col := bounds_min.col + line_number_digits + col
+                                    *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
+                                    col += 1
+                                }
+                            }
                         }
                     }
                 }
@@ -861,6 +897,8 @@ impl Chim {
         imgui.Begin("Editor", null, .NoResize or .NoMove or .NoCollapse or .NoDecoration or .NoBringToFrontOnFocus)
         defer imgui.End()
 
+        self.has_focus = imgui.IsWindowFocused(.None)
+
         mut draw_list := imgui.GetWindowDrawList()
 
         self.window_pixel_size = imgui.GetContentRegionAvail()
@@ -904,6 +942,18 @@ impl Chim {
                         ' '  -> {
                             pos := (pos_min + pos_max) * 0.5f
                             draw_list.AddCircleFilled(&pos, scaled_size.y * 0.075f, self.palette.get(.Whitespace), 5)
+                        }
+                        '`t' -> {
+                            pos1 := pos_min + vec2(scaled_size.x, scaled_size.y * 0.5f)
+                            pos0 := pos1 + vec2(-scaled_size.x * 1.05f, 0)
+                            draw_list.AddLine(&pos0, &pos1, self.palette.get(.Whitespace), scaled_size.y * 0.075f)
+
+                            if (slot.col + 1) % tab_width == 0 {
+                                pos00 := pos1 + vec2(-0.25f, -0.25f) * scaled_size.y
+                                pos01 := pos1 + vec2(-0.25f,  0.25f) * scaled_size.y
+                                draw_list.AddLine(&pos00, &pos1, self.palette.get(.Whitespace), scaled_size.y * 0.075f)
+                                draw_list.AddLine(&pos01, &pos1, self.palette.get(.Whitespace), scaled_size.y * 0.075f)
+                            }
                         }
                         $c   -> {
                             len := Utf8.encode_into(c, utf8_bytes.data)
@@ -969,6 +1019,11 @@ impl Chim {
             imgui.Checkbox("Line wrapping", ^mut self.wrapping_enabled)
             imgui.Checkbox("Highlight line", ^mut self.highlight_curr_line)
             imgui.Checkbox("Show whitespace", ^mut self.show_whitespace)
+
+            mut tab_width := i32(self.tab_width)
+            if imgui.InputInt("Tab width", ^mut tab_width, -1, -1, .None) {
+                self.tab_width = int(tab_width).clamp(1, 8)
+            }
 
             mut lnm := i32(self.line_number_mode)
             if imgui.Combo_3("Line numbers", ^mut lnm, (data, index, out) => {

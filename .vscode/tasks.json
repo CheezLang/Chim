@@ -16,7 +16,12 @@
         {
             "label": "run",
             "type": "shell",
-            "command": "./bin/chim.exe ./test_data/chim.che ./test_data/editor.che"
+            "command": "./bin/chim.exe",
+
+            "args": ["./test_data/editor.che", "./test_data/chim.che", "../Libraries/imgui/src/imgui.che"]
+            // "args": ["../Libraries/imgui/src/imgui.che"]
+            // "args": ["C:/Program Files (x86)/Windows Kits/10/Include/10.0.18362.0/um/MsHTML.h"]
+            // "args": ["D:/VulkanSDK/1.2.148.1/Include/vulkan/vulkan.hpp"]
         }
     ]
 }
