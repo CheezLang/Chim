@@ -143,6 +143,7 @@ Chim :: struct {
     // settings
     wrapping_enabled    := true
     highlight_curr_line := true
+    line_number_mode    := LineNumberMode.RelativeCursor
 
     // modifiers, keys, etc.
     current_mods_l  := GlfwMod.None
@@ -215,7 +216,7 @@ impl Chim {
             Press, F2               -> {
                 self.show_demo_window = !self.show_demo_window
             }
-            Press, _ -> {
+            _, _ if (action == Press or action == Repeat) -> {
                 match self.current_mods, key {
                     None, Escape -> {
                         self.current_mode = .Normal
@@ -265,6 +266,12 @@ impl Chim {
                     None, End -> {
                         view := self.tabs[self.active_tab].get().get_active_view()
                         view.get_mut().move_cursor_column_end()
+                    }
+
+                    Control, S -> {
+                        try_with(self.current_buffer.get().write_to_disk(), {
+                            io.formatln("[ERROR] {}", [&err])
+                        })
                     }
                 }
                 if self.current_mods != .None {
@@ -470,6 +477,7 @@ impl Chim {
     render_view :: (&mut Self, view: &mut View, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int)) {
         wrapping_enabled := view.wrapping_enabled.unwrap_or(self.wrapping_enabled)
         highlight_curr_line := view.highlight_curr_line.unwrap_or(self.highlight_curr_line)
+        line_number_mode := view.line_number_mode.unwrap_or(self.line_number_mode)
 
         count_digits :: (mut n: int) -> int {
             if n == 0 {
@@ -483,21 +491,23 @@ impl Chim {
             return count
         }
 
-        line_number_digits := 1 + match view.line_number_mode {
+        line_number_digits := match line_number_mode {
             .None -> 0
             .Absolute -> {
+                cursor_line_no  := view.cursor.line + 1
                 last_line_no := view.top_line + (bounds_max.row - bounds_min.row)
-                count_digits(last_line_no)
+                1 + max(count_digits(cursor_line_no) + 1, count_digits(last_line_no))
             }
             .RelativeCursor -> {
                 cursor_line_no  := view.cursor.line + 1
                 top_line_no     := view.cursor.line - view.top_line
                 bottom_line_no  := (view.top_line + bounds_max.row - bounds_min.row) - view.cursor.line
-                count_digits(max(cursor_line_no + 1, max(top_line_no, bottom_line_no)))
+                1 + max(count_digits(cursor_line_no) + 1, count_digits(max(top_line_no, bottom_line_no)))
             }
             .RelativeTop -> {
+                cursor_line_no  := view.cursor.line + 1
                 last_line_no := (bounds_max.row - bounds_min.row) + 1
-                count_digits(last_line_no)
+                1 + max(count_digits(cursor_line_no) + 1, count_digits(last_line_no))
             }
 
             _ -> 0
@@ -538,23 +548,28 @@ impl Chim {
             line_index := view.top_line + it_index
             match buffer.get_line(line_index) {
                 Some($line) -> {
-                    match view.line_number_mode {
+                    match line_number_mode {
                         .None -> {}
                         .Absolute -> {
-                            line_no := view.top_line + it_index + 1
-                            self.render_line_number(bounds_min.col, r, line_no, line_number_digits)
+                            if line_index == view.cursor.line {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
+                            } else {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits)
+                            }
                         }
                         .RelativeCursor -> {
-                            actual_line := view.top_line + it_index
-                            if actual_line == view.cursor.line {
-                                self.render_line_number(bounds_min.col, r, actual_line + 1, line_number_digits, 1)
+                            if line_index == view.cursor.line {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
                             } else {
-                                self.render_line_number(bounds_min.col, r, (actual_line - view.cursor.line).abs(), line_number_digits)
+                                self.render_line_number(bounds_min.col, r, (line_index - view.cursor.line).abs(), line_number_digits)
                             }
                         }
                         .RelativeTop -> {
-                            line_no := r - bounds_min.row + 1
-                            self.render_line_number(bounds_min.col, r, line_no, line_number_digits)
+                            if line_index == view.cursor.line {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
+                            } else {
+                                self.render_line_number(bounds_min.col, r, r - bounds_min.row + 1, line_number_digits)
+                            }
                         }
 
                         _ -> {}
@@ -813,7 +828,7 @@ impl Chim {
         mut pivot := vec2(0, 0)
         imgui.SetNextWindowPos(&mut pos, .None, &mut pivot)
 
-        imgui.Begin("Editor", null, .NoResize or .NoMove or .NoCollapse or .NoDecoration)
+        imgui.Begin("Editor", null, .NoResize or .NoMove or .NoCollapse or .NoDecoration or .NoBringToFrontOnFocus)
         defer imgui.End()
 
         mut draw_list := imgui.GetWindowDrawList()
@@ -914,7 +929,25 @@ impl Chim {
 
             imgui.Checkbox("Line wrapping", ^mut self.wrapping_enabled)
             imgui.Checkbox("Highlight line", ^mut self.highlight_curr_line)
-            
+
+            mut lnm := i32(self.line_number_mode)
+            if imgui.Combo_3("Line numbers", ^mut lnm, (data, index, out) => {
+                if index < 0 or index >= 4 {
+                    false
+                } else {
+                    *out = match index {
+                        0 -> "No line numbers"c
+                        1 -> "Absolute"c
+                        2 -> "Relative to curser"c
+                        3 -> "Relative to top of view"c
+                        _ -> "..."c
+                    }
+                    true
+                }
+            }, null, 4, -1) {
+                self.line_number_mode = LineNumberMode(lnm)
+            }
+
             if imgui.Checkbox("VSync", ^mut self.vsync) {
                 glfwSwapInterval(if self.vsync then 1 else 0)
             }
@@ -923,8 +956,6 @@ impl Chim {
             if imgui.DragFloat("Font size", ^mut font_size, 1.0f, 10.0f, 90.0f, "%.1f", .None) {
                 self.set_font_size(font_size)
             }
-
-            imgui.BringWindowToDisplayFront(imgui.GetCurrentContext().CurrentWindow)
         }
     }
 }

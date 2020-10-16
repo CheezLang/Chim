@@ -95,8 +95,22 @@ impl Buffer {
         ))
     }
 
-    save :: (&Self) {
+    write_to_disk :: (&Self) -> Result[(), String] {
+        return match &self.file {
+            None -> Err("Failed to write unnamed buffer to disc".to_owned())
+            Some($path) -> {
+                buffer := String.with_capacity(lines.count() * 100)
+                for &line in &self.lines {
+                    if it_index > 0 then buffer.append_char('`n')
+                    for c in &line.characters {
+                        buffer.append_char(c)
+                    }
+                }
 
+                try(fs.write_file(path.slice(), buffer.slice()))
+                Ok()
+            }
+        }
     }
 
     get_line :: (&Self, line: int) -> Option[&BufferLine] {
@@ -172,7 +186,7 @@ impl Buffer {
     }
 }
 
-LineNumberMode :: enum #copy {
+LineNumberMode :: enum #tag_type(i32) #repr("C") #copy {
     None
     Absolute
     RelativeCursor
@@ -185,7 +199,7 @@ View :: struct {
     top_line    : int = 0
     cursor      := Position()
 
-    line_number_mode    := LineNumberMode.RelativeCursor
+    line_number_mode    := Option[LineNumberMode].None
     wrapping_enabled    := Option[bool].None
     highlight_curr_line := Option[bool].None
 }
