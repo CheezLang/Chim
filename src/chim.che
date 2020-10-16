@@ -124,6 +124,77 @@ CursorType :: enum #copy {
     Underscore
 }
 
+KeyEventType :: enum #copy {
+    Char : char
+    Space
+    Escape
+    Enter
+    Tab
+    Backspace
+    Insert
+    Delete
+    Right
+    Left
+    Down
+    Up
+    PageUp
+    PageDown
+    Home
+    End
+    CapsLock
+    ScrollLock
+    NumLock
+    PrintScreen
+    Pause
+    F1
+    F2
+    F3
+    F4
+    F5
+    F6
+    F7
+    F8
+    F9
+    F10
+    F11
+    F12
+    F13
+    F14
+    F15
+    F16
+    F17
+    F18
+    F19
+    F20
+    F21
+    F22
+    F23
+    F24
+    F25
+    Kp0
+    Kp1
+    Kp2
+    Kp3
+    Kp4
+    Kp5
+    Kp6
+    Kp7
+    Kp8
+    Kp9
+    KpDecimal
+    KpDivide
+    KpMultiply
+    KpSubtract
+    KpAdd
+    KpEnter
+    KpEqual
+}
+
+KeyEvent :: struct #copy {
+    mods    : GlfwMod
+    typ     : KeyEventType
+}
+
 Chim :: struct {
     slots           : []mut Slot
 
@@ -190,9 +261,6 @@ impl Chim {
     }
 
     on_key :: (&mut Self, key: GlfwKey, scancode: i32, action: GlfwAction, mods: GlfwMod) {
-        if !self.has_focus {
-            return
-        }
         match action, key {
             use GlfwKey
             use GlfwAction
@@ -220,115 +288,343 @@ impl Chim {
 
             Press, F1               -> {
                 self.show_debug_window = !self.show_debug_window
+                return
             }
 
             Press, F2               -> {
                 self.show_demo_window = !self.show_demo_window
-            }
-            _, _ if (action == Press or action == Repeat) -> {
-                match self.current_mods, key {
-                    None, Escape -> {
-                        self.current_mode = .Normal
-                    }
-
-                    None, Left -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_column(-1)
-                    }
-
-                    None, Right -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_column(1)
-                    }
-
-                    None, Up -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_line(-1)
-                    }
-
-                    None, Down -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_line(1)
-                    }
-
-                    None, Backspace -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().delete_at_cursor()
-                    }
-
-                    None, Delete -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_column(1)
-                        view.get_mut().delete_at_cursor()
-                    }
-
-                    None, Enter -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().insert_char('`n')
-                    }
-
-                    None, Home -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_column_beginning()
-                    }
-
-                    None, End -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_column_end()
-                    }
-
-                    Control, Home -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_beginning()
-                    }
-
-                    Control, End -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().move_cursor_end()
-                    }
-
-                    Control, S -> {
-                        try_with(self.current_buffer.get().write_to_disk(), {
-                            io.formatln("[ERROR] {}", [&err])
-                        })
-                    }
-                }
-                if self.current_mods != .None {
-                    io.formatln("key = '{}', scancode = '{}', action = '{}', mods = '{}'", [key, scancode, action, mods])
-                }
+                return
             }
 
-            _ -> {
-
-            }
+            _ -> {}
         }
 
         current_mods = current_mods_l or current_mods_r
+
+        if !self.has_focus {
+            return
+        }
+
+        if action == .Press or action == .Repeat {
+            mut mods := self.current_mods
+            typ := match key {
+                GlfwKey._0 if mods == .Control -> KeyEventType.Char('0')
+                GlfwKey._1 if mods == .Control -> KeyEventType.Char('1')
+                GlfwKey._2 if mods == .Control -> KeyEventType.Char('2')
+                GlfwKey._3 if mods == .Control -> KeyEventType.Char('3')
+                GlfwKey._4 if mods == .Control -> KeyEventType.Char('4')
+                GlfwKey._5 if mods == .Control -> KeyEventType.Char('5')
+                GlfwKey._6 if mods == .Control -> KeyEventType.Char('6')
+                GlfwKey._7 if mods == .Control -> KeyEventType.Char('7')
+                GlfwKey._8 if mods == .Control -> KeyEventType.Char('8')
+                GlfwKey._9 if mods == .Control -> KeyEventType.Char('9')
+                GlfwKey.A if mods != .None and mods != .Shift -> KeyEventType.Char('a')
+                GlfwKey.B if mods != .None and mods != .Shift -> KeyEventType.Char('b')
+                GlfwKey.C if mods != .None and mods != .Shift -> KeyEventType.Char('c')
+                GlfwKey.D if mods != .None and mods != .Shift -> KeyEventType.Char('d')
+                GlfwKey.E if (GlfwMod.Control or GlfwMod.Alt is in mods) -> {
+                    mods = mods and !(GlfwMod.Control or GlfwMod.Alt)
+                    KeyEventType.Char('€')
+                }
+                GlfwKey.E if mods != .None and mods != .Shift -> KeyEventType.Char('e')
+                GlfwKey.F if mods != .None and mods != .Shift -> KeyEventType.Char('f')
+                GlfwKey.G if mods != .None and mods != .Shift -> KeyEventType.Char('g')
+                GlfwKey.H if mods != .None and mods != .Shift -> KeyEventType.Char('h')
+                GlfwKey.I if mods != .None and mods != .Shift -> KeyEventType.Char('i')
+                GlfwKey.J if mods != .None and mods != .Shift -> KeyEventType.Char('j')
+                GlfwKey.K if mods != .None and mods != .Shift -> KeyEventType.Char('k')
+                GlfwKey.L if mods != .None and mods != .Shift -> KeyEventType.Char('l')
+                GlfwKey.M if mods != .None and mods != .Shift -> KeyEventType.Char('m')
+                GlfwKey.N if mods != .None and mods != .Shift -> KeyEventType.Char('n')
+                GlfwKey.O if mods != .None and mods != .Shift -> KeyEventType.Char('o')
+                GlfwKey.P if mods != .None and mods != .Shift -> KeyEventType.Char('p')
+                GlfwKey.Q if (GlfwMod.Control or GlfwMod.Alt is in mods) -> {
+                    mods = mods and !(GlfwMod.Control or GlfwMod.Alt)
+                    KeyEventType.Char('@')
+                }
+                GlfwKey.Q if mods != .None and mods != .Shift -> KeyEventType.Char('q')
+                GlfwKey.R if mods != .None and mods != .Shift -> KeyEventType.Char('r')
+                GlfwKey.S if mods != .None and mods != .Shift -> KeyEventType.Char('s')
+                GlfwKey.T if mods != .None and mods != .Shift -> KeyEventType.Char('t')
+                GlfwKey.U if mods != .None and mods != .Shift -> KeyEventType.Char('u')
+                GlfwKey.V if mods != .None and mods != .Shift -> KeyEventType.Char('v')
+                GlfwKey.W if mods != .None and mods != .Shift -> KeyEventType.Char('w')
+                GlfwKey.X if mods != .None and mods != .Shift -> KeyEventType.Char('x')
+                GlfwKey.Y if mods != .None and mods != .Shift -> KeyEventType.Char('y')
+                GlfwKey.Z if mods != .None and mods != .Shift -> KeyEventType.Char('z')
+
+                GlfwKey.Apostrophe  if (GlfwMod.Control is in mods) or (GlfwMod.Alt is in mods) -> KeyEventType.Char('ä')
+                GlfwKey.Semicolon   if (GlfwMod.Control is in mods) or (GlfwMod.Alt is in mods) -> KeyEventType.Char('ö')
+                GlfwKey.LeftBracket if (GlfwMod.Control is in mods) or (GlfwMod.Alt is in mods) -> KeyEventType.Char('ü')
+
+                GlfwKey.Space if self.current_mods != .None -> KeyEventType.Space
+                GlfwKey.Escape -> KeyEventType.Escape
+                GlfwKey.Enter -> KeyEventType.Enter
+                GlfwKey.Tab -> KeyEventType.Tab
+                GlfwKey.Backspace -> KeyEventType.Backspace
+                GlfwKey.Insert -> KeyEventType.Insert
+                GlfwKey.Delete -> KeyEventType.Delete
+                GlfwKey.Right -> KeyEventType.Right
+                GlfwKey.Left -> KeyEventType.Left
+                GlfwKey.Down -> KeyEventType.Down
+                GlfwKey.Up -> KeyEventType.Up
+                GlfwKey.PageUp -> KeyEventType.PageUp
+                GlfwKey.PageDown -> KeyEventType.PageDown
+                GlfwKey.Home -> KeyEventType.Home
+                GlfwKey.End -> KeyEventType.End
+                GlfwKey.CapsLock -> KeyEventType.CapsLock
+                GlfwKey.ScrollLock -> KeyEventType.ScrollLock
+                GlfwKey.NumLock -> KeyEventType.NumLock
+                GlfwKey.PrintScreen -> KeyEventType.PrintScreen
+                GlfwKey.Pause -> KeyEventType.Pause
+                GlfwKey.F1 -> KeyEventType.F1
+                GlfwKey.F2 -> KeyEventType.F2
+                GlfwKey.F3 -> KeyEventType.F3
+                GlfwKey.F4 -> KeyEventType.F4
+                GlfwKey.F5 -> KeyEventType.F5
+                GlfwKey.F6 -> KeyEventType.F6
+                GlfwKey.F7 -> KeyEventType.F7
+                GlfwKey.F8 -> KeyEventType.F8
+                GlfwKey.F9 -> KeyEventType.F9
+                GlfwKey.F10 -> KeyEventType.F10
+                GlfwKey.F11 -> KeyEventType.F11
+                GlfwKey.F12 -> KeyEventType.F12
+                GlfwKey.F13 -> KeyEventType.F13
+                GlfwKey.F14 -> KeyEventType.F14
+                GlfwKey.F15 -> KeyEventType.F15
+                GlfwKey.F16 -> KeyEventType.F16
+                GlfwKey.F17 -> KeyEventType.F17
+                GlfwKey.F18 -> KeyEventType.F18
+                GlfwKey.F19 -> KeyEventType.F19
+                GlfwKey.F20 -> KeyEventType.F20
+                GlfwKey.F21 -> KeyEventType.F21
+                GlfwKey.F22 -> KeyEventType.F22
+                GlfwKey.F23 -> KeyEventType.F23
+                GlfwKey.F24 -> KeyEventType.F24
+                GlfwKey.F25 -> KeyEventType.F25
+                GlfwKey.Kp0 -> KeyEventType.Kp0
+                GlfwKey.Kp1 -> KeyEventType.Kp1
+                GlfwKey.Kp2 -> KeyEventType.Kp2
+                GlfwKey.Kp3 -> KeyEventType.Kp3
+                GlfwKey.Kp4 -> KeyEventType.Kp4
+                GlfwKey.Kp5 -> KeyEventType.Kp5
+                GlfwKey.Kp6 -> KeyEventType.Kp6
+                GlfwKey.Kp7 -> KeyEventType.Kp7
+                GlfwKey.Kp8 -> KeyEventType.Kp8
+                GlfwKey.Kp9 -> KeyEventType.Kp9
+                GlfwKey.KpDecimal -> KeyEventType.KpDecimal
+                GlfwKey.KpDivide -> KeyEventType.KpDivide
+                GlfwKey.KpMultiply -> KeyEventType.KpMultiply
+                GlfwKey.KpSubtract -> KeyEventType.KpSubtract
+                GlfwKey.KpAdd -> KeyEventType.KpAdd
+                GlfwKey.KpEnter -> KeyEventType.KpEnter
+                GlfwKey.KpEqual -> KeyEventType.KpEqual
+
+                _ -> {
+                    // io.formatln("                                                              ignoring key {}, {}, {}", [key, action, mods])
+                    return
+                }
+            }
+
+            self.handle_key(KeyEvent(mods, typ))
+        }
     }
 
     on_char :: (&mut Self, c: char) {
         if !self.has_focus {
             return
         }
-        // io.formatln("char = '{}'", [c])
+
+        if c == '@' or c == '€' or (c == ' ' and self.current_mods != .None) {
+            return
+        }
+
+        if c == ' ' {
+            self.handle_key(KeyEvent(self.current_mods, KeyEventType.Space))
+            return
+        }
+
+        mods, c := if c.is_alpha() or c.is_digit() {
+            if (c >= 'A' and c <= 'Z') or (c == 'Ä' or c == 'Ö' or c == 'Ü') {
+                self.current_mods or GlfwMod.Shift, c.to_lower()
+            } else {
+                self.current_mods, c
+            }
+        } else {
+            GlfwMod.None, c
+        }
+
+        self.handle_key(KeyEvent(mods, KeyEventType.Char(c)))
+    }
+
+    handle_key :: (&mut Self, event: KeyEvent) {
+        io.formatln("{}", [&event])
         match self.current_mode {
-            .Normal -> {
-                if c == 'i' {
+            .Normal -> match event.mods, event.typ {
+                use GlfwMod
+                use KeyEventType
+
+                None, Char('i') -> {
                     self.current_mode = .Insert
                 }
-                if c == 't' {
+                None, Char('t') -> {
                     self.commands.push(.TabNext)
                 }
-                if c == 'n' {
+                None, Char('n') -> {
                     self.commands.push(.TabPrev)
+                }
+
+                None, Left -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column(-1)
+                }
+
+                None, Right -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column(1)
+                }
+
+                None, Up -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_line(-1)
+                }
+
+                None, Down -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_line(1)
+                }
+
+                None, Home -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column_beginning()
+                }
+
+                None, End -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column_end()
+                }
+
+                Control, Home -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_beginning()
+                }
+
+                Control, End -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_end()
+                }
+
+                Control, Char('s') -> {
+                    try_with(self.current_buffer.get().write_to_disk(), {
+                        io.formatln("[ERROR] {}", [&err])
+                    })
+                }
+
+                $mods, $typ -> {
+
                 }
             }
 
-            .Insert -> {
+            .Insert -> match event.mods, event.typ {
+                use GlfwMod
+                use KeyEventType
 
-                tab := self.tabs[self.active_tab].get()
-                view := tab.get_active_view()
-                view.get_mut().insert_char(c)
+                None, Char($c) -> {
+                    tab := self.tabs[self.active_tab].get()
+                    view := tab.get_active_view()
+                    view.get_mut().insert_char(c)
+                }
+                Shift, Char($c) -> {
+                    tab := self.tabs[self.active_tab].get()
+                    view := tab.get_active_view()
+                    view.get_mut().insert_char(c.to_upper())
+                }
+
+                None, Space -> {
+                    tab := self.tabs[self.active_tab].get()
+                    view := tab.get_active_view()
+                    view.get_mut().insert_char(' ')
+                }
+
+                None, Tab -> {
+                    tab := self.tabs[self.active_tab].get()
+                    view := tab.get_active_view()
+                    view.get_mut().insert_char('`t')
+                }
+
+                Control, Char('e') -> {
+                    self.current_mode = .Normal
+                }
+
+                None, Escape -> {
+                    self.current_mode = .Normal
+                }
+
+                None, Left -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column(-1)
+                }
+
+                None, Right -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column(1)
+                }
+
+                None, Up -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_line(-1)
+                }
+
+                None, Down -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_line(1)
+                }
+
+                None, Backspace -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().delete_at_cursor()
+                }
+
+                None, Delete -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column(1)
+                    view.get_mut().delete_at_cursor()
+                }
+
+                None, Enter -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().insert_char('`n')
+                }
+
+                None, Home -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column_beginning()
+                }
+
+                None, End -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column_end()
+                }
+
+                Control, Home -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_beginning()
+                }
+
+                Control, End -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_end()
+                }
+
+                Control, Char('s') -> {
+                    try_with(self.current_buffer.get().write_to_disk(), {
+                        io.formatln("[ERROR] {}", [&err])
+                    })
+                }
+
+                $mods, $typ -> {
+
+                }
             }
         }
     }

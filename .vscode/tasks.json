@@ -11,7 +11,7 @@
         {
             "label": "build_and_run",
             "type": "shell",
-            "command": "./build.ps1; ./bin/chim.exe ./src/chim.che ./src/editor.che"
+            "command": "./build.ps1; ./bin/chim.exe ./test_data/chim.che ./test_data/editor.che"
         },
         {
             "label": "run",
@@ -23,6 +23,7 @@
             // "args": ["C:/Program Files (x86)/Windows Kits/10/Include/10.0.18362.0/um/MsHTML.h"]
             // "args": ["D:/VulkanSDK/1.2.148.1/Include/vulkan/vulkan.hpp"]
             // "args": ["D:/Bachelorarbeit/Bachelorarbeit/train_data/samples_2020-7-18--13-55-25.json"]
+            // "args": ["D:/Bachelorarbeit/Bachelorarbeit/train_data/samples_2020-7-18--13-38-33.json"]
         }
     ]
 }
