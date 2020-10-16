@@ -1,0 +1,653 @@
+
+use import std.rc
+use import std.box
+use import std.string
+use import std.array
+use import std.ring_queue
+use import std.unicode
+
+mem :: import std.mem.allocator
+io  :: import std.io
+fmt :: import std.fmt
+C   :: import std.c
+
+use import glfw
+use import glfw_hl
+
+use import imgui_hl
+use import imgui_opengl
+imgui :: import imgui
+
+use import editor
+use import gap_buffer
+
+vec2 :: imgui.ImVec2
+vec4 :: imgui.ImVec4
+
+vec2_zero : vec2 = vec2(0, 0)
+vec4_zero : vec4 = vec4(0, 0, 0, 0)
+
+use import chim
+
+
+impl Chim {
+    render_tab :: (&mut Self, tab: &Tab, min: (col: int, row: int), max: (col: int, row: int)) {
+        for r in min.row .. max.row {
+            for c in min.col .. max.col {
+                *self.slots[c + r * SLOTS_X] = Slot('`0', .Default, .Background)
+            }
+        }
+
+        // @todo: handle multiple views
+        view := tab.get_active_view()
+        self.render_view(view.get_mut(), min, max)
+    }
+
+    calculate_visual_cursor :: (&mut Self, mut cursor: (actual: Position, visual: Position), lines: &GapBuffer[BufferLine], line0: int, line1: int, bounds: (cols: int, rows: int), wrapping: bool) -> Position {
+        if wrapping == false {
+            return cursor.visual
+        }
+        for line0 .. line1 {
+            if it >= lines.count() then break
+            if lines[it].characters.count() >= bounds.cols {
+                if cursor.actual.line == it {
+                    while cursor.visual.column >= bounds.cols - 1 {
+                        cursor.visual.line += 1
+                        cursor.visual.column -= bounds.cols
+                    }
+                    
+                    break
+                } else if cursor.actual.line > it {
+                    mut l := lines[it].characters.count()
+                    while l >= bounds.cols - 1 {
+                        cursor.visual.line += 1
+                        l -= bounds.cols
+                    }
+                }
+            }
+        }
+        return cursor.visual
+    }
+
+    calculate_visual_line_count :: (&mut Self, line_length: int, cols: int) -> int {
+        if line_length == 0 {
+            return 1
+        }
+        return (line_length + cols - 1) / cols
+    }
+
+    render_view :: (&mut Self, view: &mut View, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int)) {
+        wrapping_enabled    := view.wrapping_enabled.unwrap_or(self.wrapping_enabled)
+        highlight_curr_line := view.highlight_curr_line.unwrap_or(self.highlight_curr_line)
+        line_number_mode    := view.line_number_mode.unwrap_or(self.line_number_mode)
+        show_whitespace     := view.show_whitespace.unwrap_or(self.show_whitespace)
+        tab_width           := view.tab_width.unwrap_or(self.tab_width)
+
+        count_digits :: (mut n: int) -> int {
+            if n == 0 {
+                return 1
+            }
+            mut count := 0
+            while n != 0 {
+                n = n / 10
+                count += 1
+            }
+            return count
+        }
+
+        line_number_digits := match line_number_mode {
+            .None -> 0
+            .Absolute -> {
+                cursor_line_no  := view.cursor.line + 1
+                last_line_no := view.top_line + (bounds_max.row - bounds_min.row)
+                1 + max(count_digits(cursor_line_no) + 1, count_digits(last_line_no))
+            }
+            .RelativeCursor -> {
+                cursor_line_no  := view.cursor.line + 1
+                top_line_no     := view.cursor.line - view.top_line
+                bottom_line_no  := (view.top_line + bounds_max.row - bounds_min.row) - view.cursor.line
+                1 + max(count_digits(cursor_line_no) + 1, count_digits(max(top_line_no, bottom_line_no)))
+            }
+            .RelativeTop -> {
+                cursor_line_no  := view.cursor.line + 1
+                last_line_no := (bounds_max.row - bounds_min.row) + 1
+                1 + max(count_digits(cursor_line_no) + 1, count_digits(last_line_no))
+            }
+
+            _ -> 0
+        }
+
+        buffer := view.buffer.get()
+
+        mut cursor_scroll := 0
+        bounds : (cols: int, rows: int) = (bounds_max.col - bounds_min.col - line_number_digits, bounds_max.row - bounds_min.row)
+        {
+            view.scroll_to_cursor(bounds.cols, bounds.rows, 5)
+
+            if wrapping_enabled {
+                mut visual := calculate_visual_cursor((view.cursor, view.cursor), &buffer.lines, view.top_line, view.top_line + bounds.rows, bounds, true)
+                visual.line -= view.top_line
+
+                for view.top_line .. view.top_line + bounds.rows {
+                    if visual.line + 5 < bounds.rows {
+                        break
+                    }
+                    line_length := buffer.lines[it].characters.count()
+                    visual_lines := calculate_visual_line_count(line_length, bounds.cols)
+
+                    visual.line -= visual_lines
+                    view.top_line += 1
+                }
+            }
+        }
+
+        mut visual_cursors := Array[(actual: Position, visual: Position, scroll: int)].new()
+        visual_cursors.add((view.cursor, view.cursor, 0))
+        for &mut cursor in visual_cursors.slice_mut() {
+            cursor.visual.line -= view.top_line
+        }
+
+        mut r := bounds_min.row
+        for bounds_min.row .. bounds_max.row {
+            line_index := view.top_line + it_index
+            match buffer.get_line(line_index) {
+                Some($line) -> {
+                    match line_number_mode {
+                        .None -> {}
+                        .Absolute -> {
+                            if line_index == view.cursor.line {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
+                            } else {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits)
+                            }
+                        }
+                        .RelativeCursor -> {
+                            if line_index == view.cursor.line {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
+                            } else {
+                                self.render_line_number(bounds_min.col, r, (line_index - view.cursor.line).abs(), line_number_digits)
+                            }
+                        }
+                        .RelativeTop -> {
+                            if line_index == view.cursor.line {
+                                self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
+                            } else {
+                                self.render_line_number(bounds_min.col, r, r - bounds_min.row + 1, line_number_digits)
+                            }
+                        }
+
+                        _ -> {}
+                    }
+
+                    cursor_line := line_index == view.cursor.line
+
+                    bg := if highlight_curr_line and cursor_line then PaletteIndex.HighlightedBackground else PaletteIndex.Background
+                    if highlight_curr_line and cursor_line {
+                        for bounds_min.col .. bounds_max.col {
+                            self.slots[it + r * SLOTS_X].bg = bg
+                        }
+                    }
+
+                    handle_show_whitespace :: (index: int, line: &BufferLine, show_whitespace: bool) -> char {
+                        c := *line.characters[index]
+                        if show_whitespace {
+                            prev := if index > 0 then *line.characters[index - 1] else '`0'
+                            next := if index + 1 < line.characters.count() then *line.characters[index + 1] else ' '
+                            return match c {
+                                ' '  -> if next == ' ' or next  == '`t' or prev == ' ' or prev == '`t' then ' ' else '`0'
+                                '`t' -> '`t'
+                                $c  -> c
+                            }
+                        } else {
+                            return match c {
+                                ' '  -> '`0'
+                                '`t' -> '`0'
+                                $c   -> c
+                            }
+                        }
+                    }
+
+                    if line.characters.count() >= bounds.cols {
+                        // more chars in current line than space available
+                        if wrapping_enabled {
+                            mut col := 0
+                            for 0 .. line.characters.count() {
+                                if col >= bounds.cols {
+                                    // fill rest of column with background color
+                                    for bounds_min.col + line_number_digits + col .. bounds_max.col {
+                                        *self.slots[it + r * SLOTS_X] = Slot('`0', .Default, bg)
+                                    }
+
+                                    col = 0
+                                    r += 1
+                                    for &mut cursor in visual_cursors.slice_mut() {
+                                        if cursor.actual.line > line_index {
+                                            cursor.visual.line += 1
+                                        } else if cursor.actual.line == line_index and cursor.visual.column >= bounds.cols {
+                                            cursor.visual.line += 1
+                                            cursor.visual.column -= bounds.cols
+                                        }
+                                    }
+                                }
+
+                                c := handle_show_whitespace(it_index, line, show_whitespace)
+
+                                // write char to slots
+                                actual_col := bounds_min.col + line_number_digits + col
+                                *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg)
+                                col += 1
+                            }
+                            // fill rest of column with background color
+                            for bounds_min.col + line_number_digits + col .. bounds_max.col {
+                                *self.slots[it + r * SLOTS_X] = Slot('`0', .Default, bg)
+                            }
+                        } else {
+                            if cursor_line {
+                                // scroll just this line so that cursor is visible
+                                while view.cursor.column - cursor_scroll >= bounds.cols - 10 {
+                                    cursor_scroll += 1
+                                }
+
+                                mut offset_left := 0
+                                if cursor_scroll > 0 {
+                                    // display ... on beginning of line
+                                    offset_left = 3
+                                    for 0 .. 3 {
+                                        col := bounds_min.col + line_number_digits + it
+                                        *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, bg)
+                                    }
+                                }
+
+                                mut offset_right := 0
+                                if line.characters.count() - cursor_scroll >= bounds.cols {
+                                    offset_right = 3
+                                }
+
+                                for offset_left .. (bounds.cols - offset_right) {
+                                    if it + cursor_scroll >= line.characters.count() {
+                                        break
+                                    }
+                                    col := bounds_min.col + line_number_digits + it
+                                    ch := handle_show_whitespace(it + cursor_scroll, line, show_whitespace)
+                                    *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, bg)
+                                }
+
+                                // display ... on end of line
+                                for 0 .. offset_right {
+                                    col := bounds_max.col - offset_right + it_index
+                                    *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, bg)
+                                }
+                            } else {
+                                for 0 .. (bounds_max.col - bounds_min.col - 3) {
+                                    col := bounds_min.col + line_number_digits + it
+                                    ch  := *line.characters[it]
+                                    *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, bg)
+                                }
+
+                                // display ... on end of line
+                                for 0 .. 3 {
+                                    col := bounds_max.col - 3 + it_index
+                                    *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, bg)
+                                }
+                            }
+                        }
+                    } else {
+                        mut col := 0
+                        for 0 .. line.characters.count() {
+                            match *line.characters[it_index] {
+                                '`t' -> {
+                                    required_spaces := tab_width - col % tab_width
+                                    for 0 .. required_spaces {
+                                        actual_col := bounds_min.col + line_number_digits + col
+                                        c := if show_whitespace then '`t' else '`0'
+                                        *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
+
+                                        // shift all cursors on this line
+                                        if it_index > 0 {
+                                            for &mut cursor in visual_cursors.slice_mut() {
+                                                if cursor.actual.line == line_index and cursor.visual.column >= col {
+                                                    cursor.visual.column += 1
+                                                }
+                                            }
+                                        }
+
+                                        col += 1
+                                    }
+                                }
+
+                                _ -> {
+                                    c := handle_show_whitespace(it_index, line, show_whitespace)
+                                    actual_col := bounds_min.col + line_number_digits + col
+                                    *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
+                                    col += 1
+                                }
+                            }
+                        }
+                    }
+                }
+
+                None -> break
+            }
+
+            r += 1
+        }
+
+        // render cursor
+        cursor_type := match self.current_mode {
+            .Normal -> CursorType.Full
+            .Visual -> CursorType.Full
+            .Insert -> CursorType.Line
+            _       -> CursorType.Underscore
+        }
+        for &cursor in visual_cursors[..] {
+            self.render_cursor(cursor.visual.column + bounds_min.col + line_number_digits - cursor_scroll, cursor.visual.line + bounds_min.row , cursor_type)
+        }
+    }
+
+    render_cursor :: (&mut Self, col: int, row: int, typ: CursorType) {
+        self.cursors.add((col, row, typ))
+    }
+
+    render_line_number :: (&mut Self, col: int, row: int, number: int, align: int, offset: int = 0) {
+        count_digits :: (mut n: int) -> int {
+            if n == 0 {
+                return 1
+            }
+            mut count := 0
+            while n != 0 {
+                n = n / 10
+                count += 1
+            }
+            return count
+        }
+        digits := count_digits(number)
+        for 0 .. (align - digits) {
+            self.render_text_at(col + it_index, row, "`0", .Default, .MenuBackground)
+        }
+        mut line_no_string := fmt.format("{}", [number])
+        for 0 .. offset {
+            line_no_string.append_char('`0')
+        }
+
+        self.render_text_at(col + align - digits - offset, row, line_no_string.slice(), .Default, .MenuBackground)
+    }
+
+    render_command_line :: (&mut Self, row: int) {
+        mut col := 0
+
+        // fill rest of line with menu background
+        cols, _ := self.get_window_dim()
+        for col .. cols {
+            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
+        }
+    }
+
+    render_status_line :: (&mut Self, row: int) {
+        cols, _ := self.get_window_dim()
+
+        // fill line with menu background
+        for 0 .. cols {
+            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
+        }
+
+        mut col := 0
+        col = self.render_text_at(col, row, "[", .Default, .MenuBackground)
+        match self.current_mode {
+            .Normal -> {
+                col = self.render_text_at(col, row, "NORMAL", .Default, .MenuBackground)
+            }
+
+            .Insert -> {
+                col = self.render_text_at(col, row, "INSERT", .Default, .MenuBackground)
+            }
+
+            .Visual -> {
+                col = self.render_text_at(col, row, "VISUAL", .Default, .MenuBackground)
+            }
+
+            _ -> {}
+        }
+        col = self.render_text_at(col, row, "]", .Default, .MenuBackground)
+
+        tab := self.tabs[self.active_tab].get()
+        view := tab.get_active_view()
+        right_side := fmt.format("{}:{}", [view.get().cursor.line + 1, view.get().cursor.column + 1])
+        col = cols - right_side.get_length()
+        self.render_text_at(col, row, right_side.slice(), .Default, .MenuBackground)
+    }
+
+    render_tab_bar :: (&mut Self, row: int) {
+        if self.tabs.count() == 0 {
+            return
+        }
+
+        mut name_buffer := String.empty()
+
+        mut col := 0
+        for &tab in self.tabs[..] {
+            if it_index > 0 {
+                col = self.render_text_at(col, row, "|", .Default, .MenuBackground)
+            }
+
+            view := tab.get().get_active_view()
+
+            name := match &view.get().buffer.get().file {
+                Some($name) -> name.slice()
+                None -> {
+                    name_buffer.clear()
+                    fmt.format_into(&mut name_buffer, "Untitled {}", [it_index])
+                    name_buffer.slice()
+                }
+            }
+
+            fg, bg := if it_index == self.active_tab {
+                PaletteIndex.Default, PaletteIndex.Selection
+            } else {
+                PaletteIndex.Default, PaletteIndex.MenuBackground
+            }
+
+            col = self.render_text_at(col, row, name, fg, bg)
+        }
+
+        cols, _ := self.get_window_dim()
+        for col .. cols {
+            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
+        }
+    }
+
+    render_text_at :: (&mut Self, x: int, y: int, text: string, fg: PaletteIndex, bg: PaletteIndex) -> int {
+        cols, rows := self.get_window_dim()
+        if y < 0 or y >= rows or x < 0 {
+            return x
+        }
+
+        mut col := x
+        for c in text {
+            if col >= cols {
+                break
+            }
+
+            slot := self.slots[col + y * SLOTS_X]
+            *slot = Slot(c, fg, bg)
+
+            col += 1
+        }
+        return col
+    }
+
+    render :: (&mut Self) {
+        imgui.SetNextWindowSize(&mut self.window_pixel_size, .None)
+
+        mut pos := vec2(0, 0)
+        mut pivot := vec2(0, 0)
+        imgui.SetNextWindowPos(&mut pos, .None, &mut pivot)
+
+        imgui.Begin("Editor", null, .NoResize or .NoMove or .NoCollapse or .NoDecoration or .NoBringToFrontOnFocus)
+        defer imgui.End()
+
+        self.has_focus = imgui.IsWindowFocused(.None)
+
+        mut draw_list := imgui.GetWindowDrawList()
+
+        self.window_pixel_size = imgui.GetContentRegionAvail()
+
+        if self.character_size.x != 0 and self.character_size.y != 0 {
+            mut cols, rows := self.get_window_dim()
+            cols += 1
+
+            offset := imgui.GetWindowContentRegionMin() + imgui.GetWindowPos()
+
+            mut scale := self.window_pixel_size.y / (self.character_size.y * f32(rows))
+            scaled_size := self.character_size * scale
+            
+            //io.formatln("{} -> {}", [cols, self.window_pixel_size.x / scaled_size.x])
+
+            imgui.SetWindowFontScale(scale)
+
+            mut bg : u32 = self.palette.get(.Background)
+            mut fg : u32 = 0xff000000
+            mut utf8_bytes : [5]u8 = [0, 0, 0, 0, 0]
+
+            // copy background color of last column to next column
+            for row in 0 .. rows {
+                self.slots[cols - 1 + row * SLOTS_X].c = '`0'
+                self.slots[cols - 1 + row * SLOTS_X].bg = self.slots[cols - 2 + row * SLOTS_X].bg
+            }
+
+            // change colors of slots under full curser
+            for &c in self.cursors[..] {
+                if c.typ == .Full {
+                    slot := self.slots[c.col + c.row * SLOTS_X]
+                    slot.fg = .Background
+                    slot.bg = .Cursor
+                }
+            }
+
+            for row in 0 .. rows {
+                for col in 0 .. cols {
+                    slot := self.slots[col + row * SLOTS_X]
+                    fg = self.palette.get(slot.fg)
+                    bg = self.palette.get(slot.bg)
+
+                    pos_min := vec2(f32(col) * scaled_size.x + offset.x, f32(row) * scaled_size.y + offset.y)
+                    pos_max := vec2(pos_min.x + scaled_size.x, pos_min.y + scaled_size.y)
+
+                    draw_list.AddRectFilled(&pos_min, &pos_max, bg, 0, .None)
+
+                    match slot.c {
+                        '`0' -> {}
+                        ' '  -> {
+                            pos := (pos_min + pos_max) * 0.5f
+                            draw_list.AddCircleFilled(&pos, scaled_size.y * 0.075f, self.palette.get(.Whitespace), 5)
+                        }
+                        '`t' -> {
+                            pos1 := pos_min + vec2(scaled_size.x, scaled_size.y * 0.5f)
+                            pos0 := pos1 + vec2(-scaled_size.x * 1.05f, 0)
+                            draw_list.AddLine(&pos0, &pos1, self.palette.get(.Whitespace), scaled_size.y * 0.075f)
+
+                            if (slot.col + 1) % tab_width == 0 {
+                                pos00 := pos1 + vec2(-0.25f, -0.25f) * scaled_size.y
+                                pos01 := pos1 + vec2(-0.25f,  0.25f) * scaled_size.y
+                                draw_list.AddLine(&pos00, &pos1, self.palette.get(.Whitespace), scaled_size.y * 0.075f)
+                                draw_list.AddLine(&pos01, &pos1, self.palette.get(.Whitespace), scaled_size.y * 0.075f)
+                            }
+                        }
+                        $c   -> {
+                            len := Utf8.encode_into(c, utf8_bytes.data)
+                            *utf8_bytes[int(len)] = 0
+                            draw_list.AddText(&pos_min, fg, cast utf8_bytes.data, null)
+                        }
+                    }
+                }
+            }
+
+            // render cursors
+            for &c in self.cursors[..] {
+                match c.typ {
+                    .Line -> {
+                        p1 := vec2(f32(c.col), f32(c.row)) * scaled_size + offset
+                        p2 := p1 + vec2(0, scaled_size.y)
+                        draw_list.AddLine(&p1, &p2, self.palette.get(.Cursor), scaled_size.x * 0.1f)
+                    }
+                    .Underscore -> {
+                        p1 := vec2(f32(c.col), f32(c.row) + 0.95f) * scaled_size + offset
+                        p2 := p1 + vec2(scaled_size.x, 0)
+                        draw_list.AddLine(&p1, &p2, self.palette.get(.Cursor), scaled_size.y * 0.1f)
+                    }
+
+                    _ -> {}
+                }
+            }
+
+            self.cursors.clear()
+
+            // @assert(false)
+        }
+    }
+
+    debug_render :: (&mut Self, delta_time: f64, fps: int) {
+        if show_demo_window then
+            imgui.ShowDemoWindow(^mut show_demo_window)
+
+        if show_debug_window {
+
+            imgui.Begin("Debug", null, .None)
+            defer imgui.End()
+
+            // show states of modifiers
+            mut control := GlfwMod.Control is in current_mods
+            imgui.Checkbox("Control", ^mut control)
+            mut shift := GlfwMod.Shift is in current_mods
+            imgui.Checkbox("Shift", ^mut shift)
+            mut alt := GlfwMod.Alt is in current_mods
+            imgui.Checkbox("Alt", ^mut alt)
+            mut super := GlfwMod.Super is in current_mods
+            imgui.Checkbox("Super", ^mut super)
+
+            imgui.Separator()
+
+            delta_time_str := fmt.format_any(delta_time)
+            imgui.LabelText("Frame duration", delta_time_str.as_cstring())
+            fps_counted_str := fmt.format_any(fps)
+            imgui.LabelText("Fps", fps_counted_str.as_cstring())
+
+            imgui.Separator()
+
+            imgui.Checkbox("Line wrapping", ^mut self.wrapping_enabled)
+            imgui.Checkbox("Highlight line", ^mut self.highlight_curr_line)
+            imgui.Checkbox("Show whitespace", ^mut self.show_whitespace)
+
+            mut tab_width := i32(self.tab_width)
+            if imgui.InputInt("Tab width", ^mut tab_width, -1, -1, .None) {
+                self.tab_width = int(tab_width).clamp(1, 8)
+            }
+
+            mut lnm := i32(self.line_number_mode)
+            if imgui.Combo_3("Line numbers", ^mut lnm, (data, index, out) => {
+                if index < 0 or index >= 4 {
+                    false
+                } else {
+                    *out = match index {
+                        0 -> "No line numbers"c
+                        1 -> "Absolute"c
+                        2 -> "Relative to curser"c
+                        3 -> "Relative to top of view"c
+                        _ -> "..."c
+                    }
+                    true
+                }
+            }, null, 4, -1) {
+                self.line_number_mode = LineNumberMode(lnm)
+            }
+
+            if imgui.Checkbox("VSync", ^mut self.vsync) {
+                glfwSwapInterval(if self.vsync then 1 else 0)
+            }
+
+            mut font_size := self.font_size
+            if imgui.DragFloat("Font size", ^mut font_size, 1.0f, 10.0f, 90.0f, "%.1f", .None) {
+                self.set_font_size(font_size)
+            }
+        }
+    }
+}

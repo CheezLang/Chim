@@ -19,6 +19,8 @@ use import imgui_opengl
 imgui :: import imgui
 
 use import chim
+use import editor_input
+use import editor_render
 
 vec2 :: imgui.ImVec2
 vec4 :: imgui.ImVec4
