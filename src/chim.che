@@ -61,6 +61,7 @@ PaletteIndex :: enum #tag_type(i32) #copy {
     CurrentLineFill
     CurrentLineFillInactive
     CurrentLineEdge
+    Whitespace
     Max
 }
 
@@ -78,29 +79,30 @@ Palette :: struct {
 impl Palette {
     dark :: () -> Palette {
         mut values : [int(PaletteIndex.Max)]u32 = default
-        *values[int(PaletteIndex.Default)]                   = 0xff7f7f7f
-        *values[int(PaletteIndex.Keyword)]                   = 0xffd69c56
-        *values[int(PaletteIndex.Number)]                    = 0xff00ff00
-        *values[int(PaletteIndex.String)]                    = 0xff7070e0
-        *values[int(PaletteIndex.CharLiteral)]               = 0xff70a0e0
-        *values[int(PaletteIndex.Punctuation)]               = 0xffffffff
-        *values[int(PaletteIndex.Preprocessor)]              = 0xff408080
-        *values[int(PaletteIndex.Identifier)]                = 0xffaaaaaa
-        *values[int(PaletteIndex.KnownIdentifier)]           = 0xff9bc64d
-        *values[int(PaletteIndex.PreprocIdentifier)]         = 0xffc040a0
-        *values[int(PaletteIndex.Comment)]                   = 0xff206020
-        *values[int(PaletteIndex.MultiLineComment)]          = 0xff406020
-        *values[int(PaletteIndex.Background)]                = 0xff101010
-        *values[int(PaletteIndex.HighlightedBackground)]     = 0xff171717
-        *values[int(PaletteIndex.MenuBackground)]            = 0xff202020
-        *values[int(PaletteIndex.Cursor)]                    = 0xffe0e0e0
-        *values[int(PaletteIndex.Selection)]                 = 0x80a06020
-        *values[int(PaletteIndex.ErrorMarker)]               = 0x800020ff
-        *values[int(PaletteIndex.Breakpoint)]                = 0x40f08000
-        *values[int(PaletteIndex.LineNumber)]                = 0xff707000
-        *values[int(PaletteIndex.CurrentLineFill)]           = 0x40000000
-        *values[int(PaletteIndex.CurrentLineFillInactive)]   = 0x40808080
-        *values[int(PaletteIndex.CurrentLineEdge)]           = 0x40a0a0a0
+        *values[int(PaletteIndex.Default)]                      = 0xffbfbfbf
+        *values[int(PaletteIndex.Keyword)]                      = 0xffd69c56
+        *values[int(PaletteIndex.Number)]                       = 0xff00ff00
+        *values[int(PaletteIndex.String)]                       = 0xff7070e0
+        *values[int(PaletteIndex.CharLiteral)]                  = 0xff70a0e0
+        *values[int(PaletteIndex.Punctuation)]                  = 0xffffffff
+        *values[int(PaletteIndex.Preprocessor)]                 = 0xff408080
+        *values[int(PaletteIndex.Identifier)]                   = 0xffaaaaaa
+        *values[int(PaletteIndex.KnownIdentifier)]              = 0xff9bc64d
+        *values[int(PaletteIndex.PreprocIdentifier)]            = 0xffc040a0
+        *values[int(PaletteIndex.Comment)]                      = 0xff206020
+        *values[int(PaletteIndex.MultiLineComment)]             = 0xff406020
+        *values[int(PaletteIndex.Background)]                   = 0xff101010
+        *values[int(PaletteIndex.HighlightedBackground)]        = 0xff171717
+        *values[int(PaletteIndex.MenuBackground)]               = 0xff202020
+        *values[int(PaletteIndex.Cursor)]                       = 0xffe0e0e0
+        *values[int(PaletteIndex.Selection)]                    = 0x80a06020
+        *values[int(PaletteIndex.ErrorMarker)]                  = 0x800020ff
+        *values[int(PaletteIndex.Breakpoint)]                   = 0x40f08000
+        *values[int(PaletteIndex.LineNumber)]                   = 0xff707000
+        *values[int(PaletteIndex.CurrentLineFill)]              = 0x40000000
+        *values[int(PaletteIndex.CurrentLineFillInactive)]      = 0x40808080
+        *values[int(PaletteIndex.CurrentLineEdge)]              = 0x40a0a0a0
+        *values[int(PaletteIndex.Whitespace)]                   = 0x30a0a0a0
         return Palette(values)
     }
 
@@ -144,6 +146,7 @@ Chim :: struct {
     wrapping_enabled    := true
     highlight_curr_line := true
     line_number_mode    := LineNumberMode.RelativeCursor
+    show_whitespace     := true
 
     // modifiers, keys, etc.
     current_mods_l  := GlfwMod.None
@@ -335,7 +338,7 @@ impl Chim {
         }
 
         self.set_font("FiraMono-Regular.ttf")
-        self.set_font_size(18)
+        self.set_font_size(18.5f)
 
         if args.length > 0 {
             for &file in args {
@@ -381,8 +384,10 @@ impl Chim {
         while self.commands.count() > 0 {
             match self.commands.pop() {
                 .ChangeFontSize($size) -> {
-                    self.font_size = size
-                    font_changed = true
+                    if size >= 10 {
+                        self.font_size = size
+                        font_changed = true
+                    }
                 }
 
                 .ChangeFont($path) -> {
@@ -432,7 +437,7 @@ impl Chim {
     render_tab :: (&mut Self, tab: &Tab, min: (col: int, row: int), max: (col: int, row: int)) {
         for r in min.row .. max.row {
             for c in min.col .. max.col {
-                *self.slots[c + r * SLOTS_X] = Slot(' ', .Default, .Background)
+                *self.slots[c + r * SLOTS_X] = Slot('`0', .Default, .Background)
             }
         }
 
@@ -475,9 +480,10 @@ impl Chim {
     }
 
     render_view :: (&mut Self, view: &mut View, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int)) {
-        wrapping_enabled := view.wrapping_enabled.unwrap_or(self.wrapping_enabled)
+        wrapping_enabled    := view.wrapping_enabled.unwrap_or(self.wrapping_enabled)
         highlight_curr_line := view.highlight_curr_line.unwrap_or(self.highlight_curr_line)
-        line_number_mode := view.line_number_mode.unwrap_or(self.line_number_mode)
+        line_number_mode    := view.line_number_mode.unwrap_or(self.line_number_mode)
+        show_whitespace     := view.show_whitespace.unwrap_or(self.show_whitespace)
 
         count_digits :: (mut n: int) -> int {
             if n == 0 {
@@ -584,15 +590,34 @@ impl Chim {
                         }
                     }
 
+                    handle_show_whitespace :: (index: int, line: &BufferLine, show_whitespace: bool) -> char {
+                        c := *line.characters[index]
+                        if show_whitespace {
+                            prev := if index > 0 then *line.characters[index - 1] else '`0'
+                            next := if index + 1 < line.characters.count() then *line.characters[index + 1] else ' '
+                            return match c {
+                                ' '  -> if next == ' ' or prev == ' ' then ' ' else '`0'
+                                '`t' -> ' '
+                                $c  -> c
+                            }
+                        } else {
+                            return match c {
+                                ' '  -> '`0'
+                                '`t' -> '`0'
+                                $c   -> c
+                            }
+                        }
+                    }
+
                     if line.characters.count() >= bounds.cols {
                         // more chars in current line than space available
                         if wrapping_enabled {
                             mut col := 0
-                            for c in &line.characters {
+                            for 0 .. line.characters.count() {
                                 if col >= bounds.cols - 1 {
                                     // fill rest of column with background color
                                     for bounds_min.col + line_number_digits + col .. bounds_max.col {
-                                        *self.slots[it + r * SLOTS_X] = Slot(' ', .Default, bg)
+                                        *self.slots[it + r * SLOTS_X] = Slot('`0', .Default, bg)
                                     }
 
                                     col = 0
@@ -606,13 +631,17 @@ impl Chim {
                                         }
                                     }
                                 }
+
+                                c := handle_show_whitespace(it_index, line, show_whitespace)
+
+                                // write char to slots
                                 actual_col := bounds_min.col + line_number_digits + col
                                 *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg)
                                 col += 1
                             }
                             // fill rest of column with background color
                             for bounds_min.col + line_number_digits + col .. bounds_max.col {
-                                *self.slots[it + r * SLOTS_X] = Slot(' ', .Default, bg)
+                                *self.slots[it + r * SLOTS_X] = Slot('`0', .Default, bg)
                             }
                         } else {
                             if cursor_line {
@@ -641,7 +670,7 @@ impl Chim {
                                         break
                                     }
                                     col := bounds_min.col + line_number_digits + it
-                                    ch  := *line.characters[it + cursor_scroll]
+                                    ch := handle_show_whitespace(it + cursor_scroll, line, show_whitespace)
                                     *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, bg)
                                 }
 
@@ -665,7 +694,8 @@ impl Chim {
                             }
                         }
                     } else {
-                        for c in &line.characters {
+                        for 0 .. line.characters.count() {
+                            c := handle_show_whitespace(it_index, line, show_whitespace)
                             col := bounds_min.col + line_number_digits + it_index
                             *self.slots[col + r * SLOTS_X] = Slot(c, .Default, bg)
                         }
@@ -708,11 +738,11 @@ impl Chim {
         }
         digits := count_digits(number)
         for 0 .. (align - digits) {
-            self.render_text_at(col + it_index, row, " ", .Default, .MenuBackground)
+            self.render_text_at(col + it_index, row, "`0", .Default, .MenuBackground)
         }
         mut line_no_string := fmt.format("{}", [number])
         for 0 .. offset {
-            line_no_string.append_char(' ')
+            line_no_string.append_char('`0')
         }
 
         self.render_text_at(col + align - digits - offset, row, line_no_string.slice(), .Default, .MenuBackground)
@@ -724,7 +754,7 @@ impl Chim {
         // fill rest of line with menu background
         cols, _ := self.get_window_dim()
         for col .. cols {
-            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
+            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
         }
     }
 
@@ -733,7 +763,7 @@ impl Chim {
 
         // fill line with menu background
         for 0 .. cols {
-            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
+            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
         }
 
         mut col := 0
@@ -797,7 +827,7 @@ impl Chim {
 
         cols, _ := self.get_window_dim()
         for col .. cols {
-            *self.slots[it + row * SLOTS_X] = Slot(' ', .Default, .MenuBackground)
+            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
         }
     }
 
@@ -869,9 +899,18 @@ impl Chim {
 
                     draw_list.AddRectFilled(&pos_min, &pos_max, bg, 0, .None)
 
-                    len := Utf8.encode_into(slot.c, utf8_bytes.data)
-                    *utf8_bytes[int(len)] = 0
-                    draw_list.AddText(&pos_min, fg, cast utf8_bytes.data, null)
+                    match slot.c {
+                        '`0' -> {}
+                        ' '  -> {
+                            pos := (pos_min + pos_max) * 0.5f
+                            draw_list.AddCircleFilled(&pos, scaled_size.y * 0.075f, self.palette.get(.Whitespace), 5)
+                        }
+                        $c   -> {
+                            len := Utf8.encode_into(c, utf8_bytes.data)
+                            *utf8_bytes[int(len)] = 0
+                            draw_list.AddText(&pos_min, fg, cast utf8_bytes.data, null)
+                        }
+                    }
                 }
             }
 
@@ -929,6 +968,7 @@ impl Chim {
 
             imgui.Checkbox("Line wrapping", ^mut self.wrapping_enabled)
             imgui.Checkbox("Highlight line", ^mut self.highlight_curr_line)
+            imgui.Checkbox("Show whitespace", ^mut self.show_whitespace)
 
             mut lnm := i32(self.line_number_mode)
             if imgui.Combo_3("Line numbers", ^mut lnm, (data, index, out) => {

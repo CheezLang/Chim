@@ -202,6 +202,7 @@ View :: struct {
     line_number_mode    := Option[LineNumberMode].None
     wrapping_enabled    := Option[bool].None
     highlight_curr_line := Option[bool].None
+    show_whitespace     := Option[bool].None
 }
 
 impl View {
