@@ -19,6 +19,7 @@ use import imgui_opengl
 imgui :: import imgui
 
 use import editor
+use import editor_input
 use import gap_buffer
 
 vec2 :: imgui.ImVec2
@@ -402,9 +403,9 @@ impl Chim {
 
         // render cursor
         cursor_type := match self.current_mode {
-            .Normal -> CursorType.Full
-            .Visual -> CursorType.Full
-            .Insert -> CursorType.Line
+            .Normal -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
+            .Visual -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
+            .Insert -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Line
             _       -> CursorType.Underscore
         }
         for &cursor in visual_cursors[..] {
@@ -477,6 +478,84 @@ impl Chim {
         }
         col = self.render_text_at(col, row, "]", .Default, .MenuBackground)
 
+        col += 2
+
+        // render current input buffer
+        for &event in self.key_events[..] {
+            match event.typ {
+                .Char($ch) -> {
+                    if ch.is_alpha() {
+                        if event.mods == .Shift {
+                            col = self.render_char_at(col, row, ch.to_upper(), .Default, .MenuBackground)
+                        } else if event.mods != .None {
+                            col = self.render_text_at(col, row, "{", .Keyword, .MenuBackground)
+                            if GlfwMod.Control is in event.mods {
+                                col = self.render_text_at(col, row, "C", .Keyword, .MenuBackground)
+                            }
+                            if GlfwMod.Shift is in event.mods {
+                                col = self.render_text_at(col, row, "S", .Keyword, .MenuBackground)
+                            }
+                            if GlfwMod.Alt is in event.mods {
+                                col = self.render_text_at(col, row, "A", .Keyword, .MenuBackground)
+                            }
+                            col = self.render_text_at(col, row, "-", .Keyword, .MenuBackground)
+                            col = self.render_char_at(col, row, ch, .Keyword, .MenuBackground)
+                            col = self.render_text_at(col, row, "}", .Keyword, .MenuBackground)
+                        } else {
+                            col = self.render_char_at(col, row, ch, .Default, .MenuBackground)
+                        }
+                    } else {
+                        if event.mods != .None {
+                            col = self.render_text_at(col, row, "{", .Keyword, .MenuBackground)
+                            if GlfwMod.Control is in event.mods {
+                                col = self.render_text_at(col, row, "C", .Keyword, .MenuBackground)
+                            }
+                            if GlfwMod.Shift is in event.mods {
+                                col = self.render_text_at(col, row, "S", .Keyword, .MenuBackground)
+                            }
+                            if GlfwMod.Alt is in event.mods {
+                                col = self.render_text_at(col, row, "A", .Keyword, .MenuBackground)
+                            }
+                            col = self.render_text_at(col, row, "-", .Keyword, .MenuBackground)
+                            col = self.render_char_at(col, row, ch, .Keyword, .MenuBackground)
+                            col = self.render_text_at(col, row, "}", .Keyword, .MenuBackground)
+                        } else {
+                            col = self.render_char_at(col, row, ch, .Default, .MenuBackground)
+                        }
+                    }
+                }
+
+                $typ -> {
+                    col = self.render_text_at(col, row, "{", .Keyword, .MenuBackground)
+                    if event.mods != .None {
+                        if GlfwMod.Control is in event.mods {
+                            col = self.render_text_at(col, row, "C", .Keyword, .MenuBackground)
+                        }
+                        if GlfwMod.Shift is in event.mods {
+                            col = self.render_text_at(col, row, "S", .Keyword, .MenuBackground)
+                        }
+                        if GlfwMod.Alt is in event.mods {
+                            col = self.render_text_at(col, row, "A", .Keyword, .MenuBackground)
+                        }
+                        col = self.render_text_at(col, row, "-", .Keyword, .MenuBackground)
+                    }
+
+                    match @type_info(KeyEventType) {
+                        TypeInfoEnum($ti) -> {
+                            member := ti.get_enum_member(int(typ))
+                            if member != null {
+                                col = self.render_text_at(col, row, member.name, .Keyword, .MenuBackground)
+                            }
+                        }
+
+                        _ -> @assert(false)
+                    }
+
+                    col = self.render_text_at(col, row, "}", .Keyword, .MenuBackground)
+                }
+            }
+        }
+
         tab := self.tabs[self.active_tab].get()
         view := tab.get_active_view()
         right_side := fmt.format("{}:{}", [view.get().cursor.line + 1, view.get().cursor.column + 1])
@@ -521,6 +600,18 @@ impl Chim {
         for col .. cols {
             *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
         }
+    }
+
+    render_char_at :: (&mut Self, x: int, y: int, ch: char, fg: PaletteIndex, bg: PaletteIndex) -> int {
+        cols, rows := self.get_window_dim()
+        if y < 0 or y >= rows or x < 0 or x >= cols {
+            return x
+        }
+
+        slot := self.slots[x + y * SLOTS_X]
+        *slot = Slot(ch, fg, bg)
+
+        return x + 1
     }
 
     render_text_at :: (&mut Self, x: int, y: int, text: string, fg: PaletteIndex, bg: PaletteIndex) -> int {

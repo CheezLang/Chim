@@ -18,6 +18,8 @@ use import gap_buffer
 
 #export_scope
 
+debug_parser :: false
+
 KeyEventType :: enum #copy {
     Char : char
     Space
@@ -89,112 +91,369 @@ KeyEvent :: struct #copy {
     typ     : KeyEventType
 }
 
+ParserState :: enum #copy {
+    InProgress
+    Success
+    Error
+}
+
+Parser :: trait {
+    state           :: (&Self) -> ParserState;
+    advance         :: (&mut Self, event: KeyEvent);
+    clone           :: (&Self) -> Rc[Parser];
+    build_command   :: (&Self) -> Result[Command, String];
+}
+
+KeyParser :: struct {
+    mods    : GlfwMod
+    typ     : KeyEventType
+    _state  : ParserState
+}
+
+impl KeyParser {
+    new :: (typ: KeyEventType, mods: GlfwMod = GlfwMod.None) -> Rc[Parser] {
+        return Rc[Parser].new(KeyParser(
+            mods    = mods
+            typ     = typ
+            _state  = .InProgress
+        ))
+    }
+}
+
+impl Parser for KeyParser {
+    state :: (&Self) -> ParserState {
+        return self._state
+    }
+
+    build_command :: (&Self) -> Result[Command, String] {
+        return Err(fmt.format("No command specified"))
+    }
+
+    clone :: (&mut Self) -> Rc[Parser] {
+        return Self.new(self.typ, self.mods)
+    }
+
+    advance :: (&mut Self, event: KeyEvent) {
+        parser_log("KeyParser[{}, {}].advance({})", [self.mods, self.typ, event])
+
+        match self._state {
+            .InProgress -> {
+                types_match := match self.typ, event.typ {
+                    use KeyEventType
+                    Char($c1), Char($c2) -> c1 == c2
+                    $t1, $t2 -> t1 == t2
+                }
+                mods_match := self.mods == event.mods
+                parser_log("KeyParser[{}, {}].advance({}): types_match={}, mods_match={}", [self.mods, self.typ, event, types_match, mods_match])
+                if types_match and mods_match {
+                    self._state = .Success
+                } else {
+                    self._state = .Error
+                }
+            }
+
+            .Success -> {
+                self._state = .Error
+            }
+
+            .Error -> {}
+        }
+    }
+}
+
+SequenceParser :: struct {
+    command : String
+    args    : Array[String]
+
+    parsers : Array[Rc[Parser]]
+    current : int
+    _state  : ParserState
+}
+
+impl SequenceParser {
+    new :: (command: string, parsers: []Rc[Parser]) -> Rc[Parser] {
+        mut main := String.empty()
+        mut args := Array[String].new()
+        for part in command.split_at_char(' ', remove_empty = true) {
+            if it_index == 0 {
+                main = part.to_owned()
+            } else {
+                args.add(part.to_owned())
+            }
+        }
+        
+        mut new_parsers := Array[Rc[Parser]].new(parsers.length)
+        for &p in parsers {
+            new_parsers.add(p.get().clone())
+        }
+        return Rc[Parser].new(SequenceParser(
+            command = main
+            args    = args
+            parsers = new_parsers
+            current = 0
+            _state  = .InProgress
+        ))
+    }
+}
+
+impl Parser for SequenceParser {
+    state :: (&Self) -> ParserState {
+        return self._state
+    }
+
+    clone :: (&mut Self) -> Rc[Parser] {
+        return Self.new(self.command.slice(), self.parsers[..])
+    }
+
+    build_command :: (&Self) -> Result[Command, String] {
+        if self._state != .Success {
+            return Err(fmt.format("Invalid input"))
+        }
+
+        command := self.command.slice()
+
+        if command.starts_with("move.") {
+            name := command[5..]
+            if name == "left" {
+                return Ok(Command.Move(MoveCommand.Left))
+            } else if name == "right" {
+                return Ok(Command.Move(MoveCommand.Right))
+            } else if name == "up" {
+                return Ok(Command.Move(MoveCommand.Up))
+            } else if name == "down" {
+                return Ok(Command.Move(MoveCommand.Down))
+            } else if name == "line_home" {
+                return Ok(Command.Move(MoveCommand.Home))
+            } else if name == "line_end" {
+                return Ok(Command.Move(MoveCommand.End))
+            } else if name == "buffer_home" {
+                return Ok(Command.Move(MoveCommand.BufferHome))
+            } else if name == "buffer_end" {
+                return Ok(Command.Move(MoveCommand.BufferEnd))
+            } else if name == "page_up" {
+                return Ok(Command.Move(MoveCommand.PageUp))
+            } else if name == "page_down" {
+                return Ok(Command.Move(MoveCommand.PageDown))
+            } else {
+                return Err(fmt.format("Unknown move command: '{}'", [command]))
+            }
+
+        } else if command.starts_with("editor.") {
+            name := command[7..]
+
+            if name == "tab_next" {
+                return Ok(Command.TabNext)
+            } else if name == "tab_prev" {
+                return Ok(Command.TabPrev)
+            } else {
+                return Err(fmt.format("Unknown editor command: '{}'", [command]))
+            }
+        } else if command.starts_with("view.") {
+            name := command[5..]
+
+            if name == "delete_line" {
+                return Ok(Command.DeleteLine)
+            } else if name == "delete_left" {
+                return Ok(Command.DeleteLeft)
+            } else if name == "delete_right" {
+                return Ok(Command.DeleteRight)
+            } else {
+                return Err(fmt.format("Unknown command: '{}'", [command]))
+            }
+        } else {
+            return Err(fmt.format("Unknown command: '{}'", [command]))
+        }
+
+        return Ok(Command.TabNext)
+    }
+
+    advance :: (&mut Self, event: KeyEvent) {
+        parser_log("SequenceParser[{}].advance({})", [self.current, event])
+
+        match self._state {
+            .InProgress -> {
+                if self.current >= self.parsers.count() {
+                    self._state = .Error
+                } else {
+                    current := self.parsers[self.current].clone()
+                    current.get().advance(event)
+
+                    match current.get().state() {
+                        .InProgress -> {
+                            self._state = .InProgress
+                        }
+
+                        .Success -> {
+                            self.current += 1
+                            if self.current == self.parsers.count() {
+                                self._state = .Success
+                            }
+                        }
+
+                        .Error -> {
+                            self._state = .Error
+                        }
+                    }
+                }
+            }
+
+            .Success -> {
+                self._state = .Error
+            }
+
+            .Error -> {}
+        }
+    }
+}
+
+NormalParser :: struct {
+    normal_parsers  : Array[Rc[Parser]]
+    move_parsers    : Array[Rc[Parser]]
+    _state          : ParserState
+}
+
+impl NormalParser {
+    new :: (normal_parsers: []Rc[Parser], move_parsers: []Rc[Parser]) -> Rc[Parser] {
+        mut new_normal_parsers := Array[Rc[Parser]].new(normal_parsers.length)
+        for &p in normal_parsers {
+            new_normal_parsers.add(p.get().clone())
+        }
+
+        mut new_move_parsers := Array[Rc[Parser]].new(move_parsers.length)
+        for &p in move_parsers {
+            new_move_parsers.add(p.get().clone())
+        }
+        return Rc[Parser].new(NormalParser(
+            normal_parsers  = new_normal_parsers
+            move_parsers    = new_move_parsers
+            _state          = .InProgress
+        ))
+    }
+}
+
+impl Parser for NormalParser {
+    state :: (&Self) -> ParserState {
+        return self._state
+    }
+
+    clone :: (&mut Self) -> Rc[Parser] {
+        return Self.new(self.normal_parsers[..], self.move_parsers[..])
+    }
+
+    build_command :: (&Self) -> Result[Command, String] {
+        if self._state != .Success {
+            return Err(fmt.format("{} sequences matched the input", [self.normal_parsers.count()]))
+        }
+
+        @assert(self.normal_parsers.count() == 1)
+        return self.normal_parsers[0].get().build_command()
+    }
+
+    advance :: (&mut Self, event: KeyEvent) {
+        match self._state {
+            .InProgress -> {
+                parser_log("NormalParser.advance({})", [event])
+
+                success_parsers     := Array[Rc[Parser]].new()
+                in_progress_parsers := Array[Rc[Parser]].new()
+
+                for &p in self.normal_parsers[..] {
+                    p.get().advance(event)
+                    match p.get().state() {
+                        .InProgress -> {
+                            in_progress_parsers.add(p.clone())
+                        }
+                        .Success -> {
+                            success_parsers.add(p.clone())
+                        }
+                        .Error -> {}
+                    }
+                }
+
+                parser_log("NormalParser.advance({}): {} success, {} in progress", [event, success_parsers.count(), in_progress_parsers.count()])
+
+                if success_parsers.count() == 1 {
+                   self._state = .Success
+                   self.normal_parsers = success_parsers
+                   Memory.drop(in_progress_parsers)
+                } else if success_parsers.count() > 0 {
+                    self._state = .Error
+                    self.normal_parsers = success_parsers
+                   Memory.drop(in_progress_parsers)
+                } else if in_progress_parsers.count() > 0 {
+                    self._state = .InProgress
+                    self.normal_parsers = in_progress_parsers
+                   Memory.drop(success_parsers)
+                } else {
+                    self._state = .Error
+                   Memory.drop(success_parsers)
+                   Memory.drop(in_progress_parsers)
+                }
+            }
+
+            .Success -> {
+                self._state = .Error
+            }
+
+            .Error -> {}
+        }
+    }
+}
+
+CommandParser :: struct {
+    command : String
+    // parser  : Rc[Parser]
+}
+
 impl Chim {
     key_input_parser :: (self: ^Chim) {
-        loop {
-            self.parse(0)
-            Fiber.yield()
-        }
     }
 
     parse :: (&mut Self, mut event_index: int) {
-        use GlfwMod
-        use KeyEventType
-
-        mut repeat_count := 0
-
-        State :: enum #copy {
-            Start
-            Command
-        }
-        mut state := State.Start
-
-        self.active_parsers.clear()
-        for &p in self.command_parsers[..] {
-            self.active_parsers.add(p.clone())
-        }
-
-        mut command_index := 0
-
-        loop {
-            while self.key_events.count() <= event_index {
-                Fiber.yield()
-            }
-
-            next_event := *self.key_events[event_index]
-            io.formatln("event_index = {}, command_index = {}, next_event = {}", [event_index, command_index, next_event])
-
-            match state {
-                .Start -> match next_event.mods, next_event.typ {
-                    None, Char($c) if c.is_digit() -> {
-                        repeat_count = repeat_count * 10 + int(c - '0')
-                        event_index += 1
-                    }
-
-                    _ -> {
-                        state = .Command
-                    }
-                }
-
-                .Command -> {
-                    if repeat_count == 0 {
-                        repeat_count = 1
-                    }
-                    io.formatln("repeat_count: {}", [repeat_count])
-                    io.formatln("{} active parsers", [self.active_parsers.count()])
-
-                    mut new_active_parsers := Array[Rc[CommandParser]].new(self.active_parsers.count())
-                    for &p in self.active_parsers[..] {
-                        steps := p.get().steps[..]
-                        if command_index >= steps.length {
-                            continue
-                        }
-                        step := steps[command_index]
-                        match step {
-                            .Key($event) -> {
-                                types_match := match event.typ, next_event.typ {
-                                    Char($c1), Char($c2) -> c1 == c2
-                                    $t1, $t2 -> t1 == t2
-                                }
-                                if event.mods == next_event.mods and types_match {
-                                    new_active_parsers.add(p.clone())
-                                }
-                            }
-
-                            .Move($ch) -> {
-
-                            }
-                        }
-                    }
-                    command_index += 1
-                    self.active_parsers = new_active_parsers
-
-                    io.formatln("reduced to {} active parsers", [self.active_parsers.count()])
-
-                    if self.active_parsers.count() == 0 {
-                        for 0 ..= event_index {
-                            self.key_events.erase(event_index - it)
-                        }
-                        return
-                    } else if self.active_parsers.count() == 1 and command_index == self.active_parsers[0].get().steps.count() {
-                        for 0 ..= event_index {
-                            self.key_events.erase(event_index - it)
-                        }
-                        parser := self.active_parsers[0].get()
-                        io.formatln("finished with parser for '{}' {}", [parser.command.slice(), parser.steps[..]])
-                        return
-                    } else {
-                        event_index += 1
-                    }
-                }
-            }
-        }
     }
 
     handle_key_event :: (&mut Self, event: KeyEvent) {
+        // io.formatln("===========================")
         // io.formatln("{}", [&event])
 
-        self.key_events.insert(self.key_events.count(), event, &DEFAULT_STD_HEAP_ALLOCATOR)
+        self.key_events.add(event)
+
+        if self.current_parser.is_none() {
+            parser_log("handle_key_event: creating new parser")
+            self.current_parser = Some(NormalParser.new(self.n_normal_parsers[..], self.n_move_parsers[..]))
+        }
+
+        @assert(self.current_parser.is_some())
+
+        parser := self.current_parser.unwrap_ref().clone()
+        parser.get().advance(event)
+        match parser.get().state() {
+            .InProgress -> parser_log("handle_key_event: parser still in progress")
+            .Success -> {
+                parser_log("handle_key_event: parser succeeded")
+                command := parser.get().build_command()
+                // io.formatln("command: {}", [&command])
+
+                match command {
+                    Ok($command) -> {
+                        self.commands.push(command)
+                    }
+                    Err($err) -> {
+                        io.formatln("Failed to build command for input: {}", [err.slice()])
+                    }
+                }
+
+                self.current_parser = .None
+                self.key_events.clear()
+            }
+            .Error -> {
+                parser_log("handle_key_event: parser failed")
+                self.current_parser = .None
+                self.key_events.clear()
+            }
+        }
+
+        return
 
         match self.current_mode {
             .Normal -> match event.mods, event.typ {
@@ -297,26 +556,6 @@ impl Chim {
                     self.current_mode = .Normal
                 }
 
-                None, Left -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column(-1)
-                }
-
-                None, Right -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column(1)
-                }
-
-                None, Up -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_line(-1)
-                }
-
-                None, Down -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_line(1)
-                }
-
                 None, Backspace -> {
                     view := self.tabs[self.active_tab].get().get_active_view()
                     view.get_mut().delete_at_cursor()
@@ -333,26 +572,6 @@ impl Chim {
                     view.get_mut().insert_char('`n')
                 }
 
-                None, Home -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column_beginning()
-                }
-
-                None, End -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column_end()
-                }
-
-                Control, Home -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_beginning()
-                }
-
-                Control, End -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_end()
-                }
-
                 Control, Char('s') -> {
                     try_with(self.current_buffer.get().write_to_disk(), {
                         io.formatln("[ERROR] {}", [&err])
@@ -367,6 +586,7 @@ impl Chim {
     }
 
     on_key :: (&mut Self, key: GlfwKey, scancode: i32, action: GlfwAction, mods: GlfwMod) {
+        // io.formatln("{}, {}, {}, {}", [key, scancode, action, mods])
         match action, key {
             use GlfwKey
             use GlfwAction
@@ -384,8 +604,8 @@ impl Chim {
 
             Press, LeftAlt          -> { current_mods_l = current_mods_l or Alt }
             Release, LeftAlt        -> { current_mods_l = current_mods_l and !Alt }
-            Press, RightAlt         -> { current_mods_r = current_mods_r or Alt }
-            Release, RightAlt       -> { current_mods_r = current_mods_r and !Alt }
+            Press, RightAlt         -> { current_mods_r = current_mods_r or (Alt or Control) }
+            Release, RightAlt       -> { current_mods_r = current_mods_r and !(Alt or Control) }
 
             Press, LeftSuper        -> { current_mods_l = current_mods_l or Super }
             Release, LeftSuper      -> { current_mods_l = current_mods_l and !Super }
@@ -561,5 +781,11 @@ impl Chim {
         }
 
         self.handle_key_event(KeyEvent(mods, KeyEventType.Char(c)))
+    }
+}
+
+parser_log :: (format: string, args: []^any = []) {
+    if const debug_parser {
+        io.formatln(format, args)
     }
 }

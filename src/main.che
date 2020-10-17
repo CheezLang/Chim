@@ -36,7 +36,11 @@ glfw_error_callback :: (error: i32, description: ^mut char8) {
 }
 
 Main :: () {
-    Fiber.init()
+    exe_path := {
+        exe_path := try_with(fs.Path.get_current_executable_path(), ".".to_owned())
+        containing := fs.Path.get_containing_directory(exe_path.slice())
+        containing.to_owned()
+    }
 
     mut chim := mem.alloc(Chim)
     defer mem.free(chim)
@@ -46,7 +50,7 @@ Main :: () {
 
     args := get_cmd_args()
 
-    chim.initialize(args[1..])
+    chim.initialize(exe_path, args[1..])
 
     glfwSetErrorCallback(glfw_error_callback)
 

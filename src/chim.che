@@ -42,11 +42,23 @@ Slot :: struct {
     col : int = 0
 }
 
+MoveCommand :: enum {
+    Left, Right, Up, Down
+    Home, End
+    BufferHome, BufferEnd
+    PageUp, PageDown
+    ViewGoToChar        : char
+    ViewGoBeforeChar    : char
+}
+
 Command :: enum {
+    Move            : MoveCommand
+    SwitchMode      : Mode
     ChangeFontSize  : f32
     ChangeFont      : String
-    TabNext
-    TabPrev
+    TabNext, TabPrev
+    DeleteLeft, DeleteRight
+    DeleteLine
 }
 
 Mode :: enum #copy {
@@ -72,36 +84,25 @@ CursorType :: enum #copy {
 // gdyfl        -> view.delete_all_occurances_of 'y' (view.move_cursor_to 'l')
 
 
-CommandStep :: enum #copy {
-    Key     : KeyEvent
-    Move    : char
-}
-
-CommandParser :: struct {
-    command : String
-    steps   : Array[CommandStep]
-}
-
-impl CommandParser {
-    from_slice :: (command: string, steps: []CommandStep) -> CommandParser {
-        return CommandParser(command.to_owned(), Array[CommandStep].from_slice(steps))
-    }
-
-    parse :: (text: string) -> Result[CommandParser, ()] {
-        return Err()
-    }
-}
 
 Chim :: struct {
     slots           : []mut Slot
+    /// path of this executable
+    exe_path        := ".".to_owned()
 
     cursors         := Array[(col: int, row: int, typ: CursorType)].new()
     commands        := RingQueue[Command].new()
 
-    parser_fiber    : ^Fiber = null
-    key_events      := GapBuffer[KeyEvent].new(20, &DEFAULT_STD_HEAP_ALLOCATOR)
-    command_parsers := Array[Rc[CommandParser]].new()
-    active_parsers  := Array[Rc[CommandParser]].new()
+    key_events      := Array[KeyEvent].new(20)
+
+    // normal_mode
+    n_normal_parsers    := Array[Rc[Parser]].new()
+    n_move_parsers      := Array[Rc[Parser]].new()
+    i_normal_parsers    := Array[Rc[Parser]].new()
+    i_move_parsers      := Array[Rc[Parser]].new()
+    v_normal_parsers    := Array[Rc[Parser]].new()
+    v_move_parsers      := Array[Rc[Parser]].new()
+    current_parser      := Option[Rc[Parser]].None
 
     // editor stuff
     current_mode    := Mode.Normal
@@ -176,9 +177,8 @@ impl Chim {
         }
     }
 
-    initialize :: (&mut Self, args: []String) {
-        self.parser_fiber = Fiber.new(cast(Fn(^Chim)) Chim.key_input_parser, ^*self)
-
+    initialize :: (&mut Self, exe_path: String, args: []String) {
+        self.exe_path = exe_path
         for row in 0 .. SLOTS_X {
             for col in 0 .. SLOTS_Y {
                 *self.slots[col + row * SLOTS_X] = Slot('´', .Comment, .Background)
@@ -210,13 +210,39 @@ impl Chim {
             self.current_buffer = self.buffers[0].clone()
         }
 
-        self.register_command("view.left", [CommandStep.Key(KeyEvent(.None, .Left))])
-        self.register_command("editor.save", [CommandStep.Key(KeyEvent(.Control, .Char('s')))])
-        self.register_command("view.delete_line", [CommandStep.Key(KeyEvent(.None, .Char('d'))), CommandStep.Key(KeyEvent(.None, .Char('d')))])
+        self.register_command("move.left", [KeyParser.new(.Left)])
+        self.register_command("move.right", [KeyParser.new(.Right)])
+        self.register_command("move.up", [KeyParser.new(.Up)])
+        self.register_command("move.down", [KeyParser.new(.Down)])
+        self.register_command("move.line_home", [KeyParser.new(.Home)])
+        self.register_command("move.line_end", [KeyParser.new(.End)])
+        self.register_command("move.buffer_home", [KeyParser.new(.Home, .Control)])
+        self.register_command("move.buffer_end", [KeyParser.new(.End, .Control)])
+        self.register_command("move.page_up", [KeyParser.new(.PageUp)])
+        self.register_command("move.page_down", [KeyParser.new(.PageDown)])
+
+        // alternative key bindings
+        self.register_command("move.buffer_home", [KeyParser.new(.Char('g')), KeyParser.new(.Char('h'))])
+        self.register_command("move.buffer_end", [KeyParser.new(.Char('g')), KeyParser.new(.Char('e'))])
+
+        // editor commands
+        self.register_command("editor.tab_next", [KeyParser.new(.Tab, .Control)])
+        self.register_command("editor.tab_prev", [KeyParser.new(.Tab, .Control or .Shift)])
+        self.register_command("editor.save_buffer", [KeyParser.new(.Char('s'), .Control)])
+
+        // view commands
+        self.register_command("view.delete_left", [KeyParser.new(.Backspace)])
+        self.register_command("view.delete_right", [KeyParser.new(.Delete)])
+        self.register_command("view.delete_line", [KeyParser.new(.Char('d')), KeyParser.new(.Char('d'))])
+
+        //
+        self.register_command("editor.mode_insert", [KeyParser.new(.Char('i'))])
+        self.register_command("editor.mode_normal", [KeyParser.new(.Char('e'), .Control)])
+        self.register_command("editor.mode_normal", [KeyParser.new(.Escape)])
     }
 
-    register_command :: (&mut Self, command: string, steps: []CommandStep) {
-        self.command_parsers.add(Rc[CommandParser].new(CommandParser.from_slice(command, steps)))
+    register_command :: (&mut Self, command: string, steps: []Rc[Parser]) {
+        self.n_normal_parsers.add(SequenceParser.new(command, steps))
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {
@@ -236,10 +262,6 @@ impl Chim {
     }
 
     update :: (&mut Self) {
-        if self.key_events.count() > 0 {
-            self.parser_fiber.resume()
-        }
-
         mut font_changed := false
         mut rerender := false
 
@@ -254,8 +276,12 @@ impl Chim {
 
                 .ChangeFont($path) -> {
                     self.current_font.clear()
-                    fmt.format_into(&mut self.current_font, "fonts/{}", [path])
+                    fmt.format_into(&mut self.current_font, "{}/fonts/{}", [self.exe_path.slice(), path])
                     font_changed = true
+                }
+
+                .SwitchMode($mode) -> {
+                    self.current_mode = mode
                 }
 
                 .TabNext -> {
@@ -264,6 +290,84 @@ impl Chim {
 
                 .TabPrev -> {
                     self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
+                }
+
+                .DeleteLine -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().delete_line()
+                }
+
+                .DeleteLeft -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().delete_at_cursor()
+                }
+
+                .DeleteRight -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().move_cursor_column(1)
+                    view.get_mut().delete_at_cursor()
+                }
+
+                .Move($move) -> {
+                    match move {
+                        .Left -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_column(-1)
+                        }
+
+                        .Right -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_column(1)
+                        }
+
+                        .Up -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_line(-1)
+                        }
+
+                        .Down -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_line(1)
+                        }
+
+                        .Home -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_column_beginning()
+                        }
+
+                        .End -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_column_end()
+                        }
+
+                        .BufferHome -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_beginning()
+                        }
+
+                        .BufferEnd -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_end()
+                        }
+
+                        .PageUp -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2)
+                        }
+
+                        .PageDown -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().move_cursor_line(self.get_window_dim().rows / 2)
+                        }
+
+                        $cmd -> {
+                            io.formatln("[ERROR] move command not implemented: {}", [&cmd])
+                        }
+                    }
+                }
+
+                $cmd -> {
+                    io.formatln("[ERROR] command not implemented: {}", [&cmd])
                 }
             }
         }

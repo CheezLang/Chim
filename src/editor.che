@@ -253,6 +253,12 @@ impl View {
         self.clamp_or_wrap_cursor_position(wrap=true)
     }
 
+    delete_line :: (&mut Self) {
+        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.buffer.get_mut().erase_line(self.cursor.line)
+        self.clamp_or_wrap_cursor_position(wrap=true)
+    }
+
     delete_at_cursor :: (&mut Self) {
         self.clamp_or_wrap_cursor_position(wrap=false)
         if self.cursor.column == 0 {
