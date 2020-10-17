@@ -1,8 +1,6 @@
 use import std.string
 use import std.array
 use import std.unicode
-use import std.fiber
-use import std.thread
 use import std.mem.std_heap_allocator
 use import std.rc
 
@@ -245,6 +243,12 @@ impl Parser for SequenceParser {
                 return Ok(Command.TabNext)
             } else if name == "tab_prev" {
                 return Ok(Command.TabPrev)
+            } else if name == "mode_insert" {
+                return Ok(Command.SwitchMode(Mode.Insert))
+            } else if name == "mode_normal" {
+                return Ok(Command.SwitchMode(Mode.Normal))
+            } else if name == "buffer_save" {
+                return Ok(Command.BufferSave)
             } else {
                 return Err(fmt.format("Unknown editor command: '{}'", [command]))
             }
@@ -256,6 +260,8 @@ impl Parser for SequenceParser {
             } else if name == "delete_left" {
                 return Ok(Command.DeleteLeft)
             } else if name == "delete_right" {
+                return Ok(Command.DeleteRight)
+            } else if name == "insert_char" {
                 return Ok(Command.DeleteRight)
             } else {
                 return Err(fmt.format("Unknown command: '{}'", [command]))
@@ -309,6 +315,7 @@ impl Parser for SequenceParser {
 NormalParser :: struct {
     normal_parsers  : Array[Rc[Parser]]
     move_parsers    : Array[Rc[Parser]]
+    final_parser    : Option[Rc[Parser]]
     _state          : ParserState
 }
 
@@ -326,6 +333,7 @@ impl NormalParser {
         return Rc[Parser].new(NormalParser(
             normal_parsers  = new_normal_parsers
             move_parsers    = new_move_parsers
+            final_parser    = .None
             _state          = .InProgress
         ))
     }
@@ -345,8 +353,9 @@ impl Parser for NormalParser {
             return Err(fmt.format("{} sequences matched the input", [self.normal_parsers.count()]))
         }
 
-        @assert(self.normal_parsers.count() == 1)
-        return self.normal_parsers[0].get().build_command()
+        @assert(self.final_parser.is_some())
+
+        return self.final_parser.unwrap_ref().get().build_command()
     }
 
     advance :: (&mut Self, event: KeyEvent) {
@@ -354,40 +363,85 @@ impl Parser for NormalParser {
             .InProgress -> {
                 parser_log("NormalParser.advance({})", [event])
 
-                success_parsers     := Array[Rc[Parser]].new()
-                in_progress_parsers := Array[Rc[Parser]].new()
+                normal_success_parsers      := Array[Rc[Parser]].new()
+                normal_in_progress_parsers  := Array[Rc[Parser]].new()
+                move_success_parsers        := Array[Rc[Parser]].new()
+                move_in_progress_parsers    := Array[Rc[Parser]].new()
 
                 for &p in self.normal_parsers[..] {
                     p.get().advance(event)
                     match p.get().state() {
                         .InProgress -> {
-                            in_progress_parsers.add(p.clone())
+                            normal_in_progress_parsers.add(p.clone())
                         }
                         .Success -> {
-                            success_parsers.add(p.clone())
+                            normal_success_parsers.add(p.clone())
                         }
                         .Error -> {}
                     }
                 }
 
-                parser_log("NormalParser.advance({}): {} success, {} in progress", [event, success_parsers.count(), in_progress_parsers.count()])
+                for &p in self.move_parsers[..] {
+                    p.get().advance(event)
+                    match p.get().state() {
+                        .InProgress -> {
+                            move_in_progress_parsers.add(p.clone())
+                        }
+                        .Success -> {
+                            move_success_parsers.add(p.clone())
+                        }
+                        .Error -> {}
+                    }
+                }
 
-                if success_parsers.count() == 1 {
-                   self._state = .Success
-                   self.normal_parsers = success_parsers
-                   Memory.drop(in_progress_parsers)
-                } else if success_parsers.count() > 0 {
+                parser_log("NormalParser.advance({}): {} success, {} in progress", [event, normal_success_parsers.count(), normal_in_progress_parsers.count()])
+
+                if normal_success_parsers.count() == 1 {
+                    self._state = .Success
+                    self.final_parser = Some(normal_success_parsers[0].clone())
+                    Memory.drop(normal_success_parsers)
+                    Memory.drop(normal_in_progress_parsers)
+                    Memory.drop(move_success_parsers)
+                    Memory.drop(move_in_progress_parsers)
+                } else if normal_success_parsers.count() > 0 {
                     self._state = .Error
-                    self.normal_parsers = success_parsers
-                   Memory.drop(in_progress_parsers)
-                } else if in_progress_parsers.count() > 0 {
+                    self.normal_parsers = normal_success_parsers
+                    Memory.drop(normal_in_progress_parsers)
+                    Memory.drop(move_success_parsers)
+                    Memory.drop(move_in_progress_parsers)
+                } else if normal_in_progress_parsers.count() > 0 {
                     self._state = .InProgress
-                    self.normal_parsers = in_progress_parsers
-                   Memory.drop(success_parsers)
+                    self.normal_parsers = normal_in_progress_parsers
+                    Memory.drop(normal_success_parsers)
+                    Memory.drop(move_success_parsers)
+                    Memory.drop(move_in_progress_parsers)
+                } else if move_success_parsers.count() == 1 {
+                    self._state = .Success
+                    self.final_parser = Some(move_success_parsers[0].clone())
+                    Memory.drop(normal_success_parsers)
+                    Memory.drop(normal_in_progress_parsers)
+                    Memory.drop(move_success_parsers)
+                    Memory.drop(move_in_progress_parsers)
+                } else if move_success_parsers.count() > 1 {
+                    self._state = .Error
+                    self.normal_parsers.clear()
+                    self.move_parsers = move_success_parsers
+                    Memory.drop(normal_success_parsers)
+                    Memory.drop(normal_in_progress_parsers)
+                    Memory.drop(move_in_progress_parsers)
+                } else if move_in_progress_parsers.count() > 0 {
+                    self._state = .InProgress
+                    self.normal_parsers.clear()
+                    self.move_parsers = move_in_progress_parsers
+                    Memory.drop(normal_success_parsers)
+                    Memory.drop(normal_in_progress_parsers)
+                    Memory.drop(move_success_parsers)
                 } else {
                     self._state = .Error
-                   Memory.drop(success_parsers)
-                   Memory.drop(in_progress_parsers)
+                    Memory.drop(normal_success_parsers)
+                    Memory.drop(normal_in_progress_parsers)
+                    Memory.drop(move_success_parsers)
+                    Memory.drop(move_in_progress_parsers)
                 }
             }
 
@@ -398,11 +452,6 @@ impl Parser for NormalParser {
             .Error -> {}
         }
     }
-}
-
-CommandParser :: struct {
-    command : String
-    // parser  : Rc[Parser]
 }
 
 impl Chim {
@@ -416,11 +465,53 @@ impl Chim {
         // io.formatln("===========================")
         // io.formatln("{}", [&event])
 
+        if self.current_mode == .Insert {
+            match event.mods, event.typ {
+                GlfwMod.None, KeyEventType.Char($ch) -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().insert_char(ch)
+                    return
+                }
+                GlfwMod.Shift, KeyEventType.Char($ch) -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().insert_char(ch.to_upper())
+                    return
+                }
+
+                GlfwMod.None, KeyEventType.Space -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().insert_char(' ')
+                    return
+                }
+
+                GlfwMod.None, KeyEventType.Enter -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().insert_char('`n')
+                    return
+                }
+
+                _ -> {}
+            }
+        }
+
         self.key_events.add(event)
 
         if self.current_parser.is_none() {
             parser_log("handle_key_event: creating new parser")
-            self.current_parser = Some(NormalParser.new(self.n_normal_parsers[..], self.n_move_parsers[..]))
+
+            match self.current_mode {
+                .Normal -> {
+                    self.current_parser = Some(NormalParser.new(self.n_normal_parsers[..], self.n_move_parsers[..]))
+                }
+
+                .Insert -> {
+                    self.current_parser = Some(NormalParser.new(self.i_normal_parsers[..], self.i_move_parsers[..]))
+                }
+
+                .Visual -> {
+                    self.current_parser = Some(NormalParser.new(self.v_normal_parsers[..], self.v_move_parsers[..]))
+                }
+            }
         }
 
         @assert(self.current_parser.is_some())
@@ -450,137 +541,6 @@ impl Chim {
                 parser_log("handle_key_event: parser failed")
                 self.current_parser = .None
                 self.key_events.clear()
-            }
-        }
-
-        return
-
-        match self.current_mode {
-            .Normal -> match event.mods, event.typ {
-                use GlfwMod
-                use KeyEventType
-
-                None, Char('i') -> {
-                    self.current_mode = .Insert
-                }
-                None, Char('t') -> {
-                    self.commands.push(.TabNext)
-                }
-                None, Char('n') -> {
-                    self.commands.push(.TabPrev)
-                }
-
-                None, Left -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column(-1)
-                }
-
-                None, Right -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column(1)
-                }
-
-                None, Up -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_line(-1)
-                }
-
-                None, Down -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_line(1)
-                }
-
-                None, Home -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column_beginning()
-                }
-
-                None, End -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column_end()
-                }
-
-                Control, Home -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_beginning()
-                }
-
-                Control, End -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_end()
-                }
-
-                Control, Char('s') -> {
-                    try_with(self.current_buffer.get().write_to_disk(), {
-                        io.formatln("[ERROR] {}", [&err])
-                    })
-                }
-
-                $mods, $typ -> {
-
-                }
-            }
-
-            .Insert -> match event.mods, event.typ {
-                use GlfwMod
-                use KeyEventType
-
-                None, Char($c) -> {
-                    tab := self.tabs[self.active_tab].get()
-                    view := tab.get_active_view()
-                    view.get_mut().insert_char(c)
-                }
-                Shift, Char($c) -> {
-                    tab := self.tabs[self.active_tab].get()
-                    view := tab.get_active_view()
-                    view.get_mut().insert_char(c.to_upper())
-                }
-
-                None, Space -> {
-                    tab := self.tabs[self.active_tab].get()
-                    view := tab.get_active_view()
-                    view.get_mut().insert_char(' ')
-                }
-
-                None, Tab -> {
-                    tab := self.tabs[self.active_tab].get()
-                    view := tab.get_active_view()
-                    view.get_mut().insert_char('`t')
-                }
-
-                Control, Char('e') -> {
-                    self.current_mode = .Normal
-                }
-
-                None, Escape -> {
-                    self.current_mode = .Normal
-                }
-
-                None, Backspace -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().delete_at_cursor()
-                }
-
-                None, Delete -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column(1)
-                    view.get_mut().delete_at_cursor()
-                }
-
-                None, Enter -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char('`n')
-                }
-
-                Control, Char('s') -> {
-                    try_with(self.current_buffer.get().write_to_disk(), {
-                        io.formatln("[ERROR] {}", [&err])
-                    })
-                }
-
-                $mods, $typ -> {
-
-                }
             }
         }
     }

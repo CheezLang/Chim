@@ -4,7 +4,6 @@ use import std.string
 use import std.array
 use import std.ring_queue
 use import std.unicode
-use import std.fiber
 use import std.mem.std_heap_allocator
 
 mem :: import std.mem.allocator
@@ -59,6 +58,7 @@ Command :: enum {
     TabNext, TabPrev
     DeleteLeft, DeleteRight
     DeleteLine
+    BufferSave
 }
 
 Mode :: enum #copy {
@@ -210,39 +210,75 @@ impl Chim {
             self.current_buffer = self.buffers[0].clone()
         }
 
-        self.register_command("move.left", [KeyParser.new(.Left)])
-        self.register_command("move.right", [KeyParser.new(.Right)])
-        self.register_command("move.up", [KeyParser.new(.Up)])
-        self.register_command("move.down", [KeyParser.new(.Down)])
-        self.register_command("move.line_home", [KeyParser.new(.Home)])
-        self.register_command("move.line_end", [KeyParser.new(.End)])
-        self.register_command("move.buffer_home", [KeyParser.new(.Home, .Control)])
-        self.register_command("move.buffer_end", [KeyParser.new(.End, .Control)])
-        self.register_command("move.page_up", [KeyParser.new(.PageUp)])
-        self.register_command("move.page_down", [KeyParser.new(.PageDown)])
+        { // normal mode key bindings
+            // move commands
+            self.register_move_command(.Normal, "move.left", [KeyParser.new(.Left)])
+            self.register_move_command(.Normal, "move.right", [KeyParser.new(.Right)])
+            self.register_move_command(.Normal, "move.up", [KeyParser.new(.Up)])
+            self.register_move_command(.Normal, "move.down", [KeyParser.new(.Down)])
+            self.register_move_command(.Normal, "move.line_home", [KeyParser.new(.Home)])
+            self.register_move_command(.Normal, "move.line_end", [KeyParser.new(.End)])
+            self.register_move_command(.Normal, "move.buffer_home", [KeyParser.new(.Home, .Control)])
+            self.register_move_command(.Normal, "move.buffer_end", [KeyParser.new(.End, .Control)])
+            self.register_move_command(.Normal, "move.page_up", [KeyParser.new(.PageUp)])
+            self.register_move_command(.Normal, "move.page_down", [KeyParser.new(.PageDown)])
+    
+            // alternative key bindings
+            self.register_command(.Normal, "move.buffer_home", [KeyParser.new(.Char('g')), KeyParser.new(.Char('h'))])
+            self.register_command(.Normal, "move.buffer_end", [KeyParser.new(.Char('g')), KeyParser.new(.Char('e'))])
+    
+            // editor commands
+            self.register_command(.Normal, "editor.tab_next", [KeyParser.new(.Tab, .Control)])
+            self.register_command(.Normal, "editor.tab_prev", [KeyParser.new(.Tab, .Control or .Shift)])
+            self.register_command(.Normal, "editor.buffer_save", [KeyParser.new(.Char('s'), .Control)])
+            self.register_command(.Normal, "editor.mode_insert", [KeyParser.new(.Char('i'))])
 
-        // alternative key bindings
-        self.register_command("move.buffer_home", [KeyParser.new(.Char('g')), KeyParser.new(.Char('h'))])
-        self.register_command("move.buffer_end", [KeyParser.new(.Char('g')), KeyParser.new(.Char('e'))])
+            // view commands
+            self.register_command(.Normal, "view.delete_left", [KeyParser.new(.Backspace)])
+            self.register_command(.Normal, "view.delete_right", [KeyParser.new(.Delete)])
+            self.register_command(.Normal, "view.delete_line", [KeyParser.new(.Char('d')), KeyParser.new(.Char('d'))])
+        }
 
-        // editor commands
-        self.register_command("editor.tab_next", [KeyParser.new(.Tab, .Control)])
-        self.register_command("editor.tab_prev", [KeyParser.new(.Tab, .Control or .Shift)])
-        self.register_command("editor.save_buffer", [KeyParser.new(.Char('s'), .Control)])
+        { // insert mode key bindings
+            // move commands
+            self.register_move_command(.Insert, "move.left", [KeyParser.new(.Left)])
+            self.register_move_command(.Insert, "move.right", [KeyParser.new(.Right)])
+            self.register_move_command(.Insert, "move.up", [KeyParser.new(.Up)])
+            self.register_move_command(.Insert, "move.down", [KeyParser.new(.Down)])
+            self.register_move_command(.Insert, "move.line_home", [KeyParser.new(.Home)])
+            self.register_move_command(.Insert, "move.line_end", [KeyParser.new(.End)])
+            self.register_move_command(.Insert, "move.buffer_home", [KeyParser.new(.Home, .Control)])
+            self.register_move_command(.Insert, "move.buffer_end", [KeyParser.new(.End, .Control)])
+            self.register_move_command(.Insert, "move.page_up", [KeyParser.new(.PageUp)])
+            self.register_move_command(.Insert, "move.page_down", [KeyParser.new(.PageDown)])
 
-        // view commands
-        self.register_command("view.delete_left", [KeyParser.new(.Backspace)])
-        self.register_command("view.delete_right", [KeyParser.new(.Delete)])
-        self.register_command("view.delete_line", [KeyParser.new(.Char('d')), KeyParser.new(.Char('d'))])
+            // editor commands
+            self.register_command(.Insert, "editor.tab_next", [KeyParser.new(.Tab, .Control)])
+            self.register_command(.Insert, "editor.tab_prev", [KeyParser.new(.Tab, .Control or .Shift)])
+            self.register_command(.Insert, "editor.buffer_save", [KeyParser.new(.Char('s'), .Control)])
+            self.register_command(.Insert, "editor.mode_normal", [KeyParser.new(.Char('e'), .Control)])
+            self.register_command(.Insert, "editor.mode_normal", [KeyParser.new(.Escape)])
 
-        //
-        self.register_command("editor.mode_insert", [KeyParser.new(.Char('i'))])
-        self.register_command("editor.mode_normal", [KeyParser.new(.Char('e'), .Control)])
-        self.register_command("editor.mode_normal", [KeyParser.new(.Escape)])
+            // view commands
+            self.register_command(.Insert, "view.delete_left", [KeyParser.new(.Backspace)])
+            self.register_command(.Insert, "view.delete_right", [KeyParser.new(.Delete)])
+        }
     }
 
-    register_command :: (&mut Self, command: string, steps: []Rc[Parser]) {
-        self.n_normal_parsers.add(SequenceParser.new(command, steps))
+    register_command :: (&mut Self, mode: Mode, command: string, steps: []Rc[Parser]) {
+        match mode {
+            .Normal -> self.n_normal_parsers.add(SequenceParser.new(command, steps))
+            .Insert -> self.i_normal_parsers.add(SequenceParser.new(command, steps))
+            .Visual -> self.v_normal_parsers.add(SequenceParser.new(command, steps))
+        }
+    }
+
+    register_move_command :: (&mut Self, mode: Mode, command: string, steps: []Rc[Parser]) {
+        match mode {
+            .Normal -> self.n_move_parsers.add(SequenceParser.new(command, steps))
+            .Insert -> self.i_move_parsers.add(SequenceParser.new(command, steps))
+            .Visual -> self.v_move_parsers.add(SequenceParser.new(command, steps))
+        }
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {
@@ -282,6 +318,13 @@ impl Chim {
 
                 .SwitchMode($mode) -> {
                     self.current_mode = mode
+                }
+
+                .BufferSave -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    try_with(view.get().buffer.get().write_to_disk(), {
+                        io.formatln("[ERROR] {}", [&err])
+                    })
                 }
 
                 .TabNext -> {
