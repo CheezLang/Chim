@@ -559,7 +559,7 @@ impl Chim {
 
         tab := self.tabs[self.active_tab].get()
         view := tab.get_active_view()
-        right_side := fmt.format("{}:{}", [view.get().cursor.line + 1, view.get().cursor.column + 1])
+        right_side := fmt.format("{}:{} / {}", [view.get().cursor.line + 1, view.get().cursor.column + 1, view.get().buffer.get().lines.count()])
         col = cols - right_side.get_length()
         self.render_text_at(col, row, right_side.slice(), .Default, .MenuBackground)
     }
@@ -780,6 +780,7 @@ impl Chim {
             imgui.Checkbox("Line wrapping", ^mut self.wrapping_enabled)
             imgui.Checkbox("Highlight line", ^mut self.highlight_curr_line)
             imgui.Checkbox("Show whitespace", ^mut self.show_whitespace)
+            imgui.Checkbox("Use tab character", ^mut self.use_tab_char)
 
             mut tab_width := i32(self.tab_width)
             if imgui.InputInt("Tab width", ^mut tab_width, -1, -1, .None) {

@@ -262,8 +262,8 @@ impl Parser for SequenceParser {
             }
 
             return Ok(Command(self.count, typ))
-        } else if command.starts_with("view.") {
-            name := command[5..]
+        } else if command.starts_with("buffer.") {
+            name := command[7..]
 
             typ := if name == "delete_line" {
                 CommandType.DeleteLine
@@ -273,6 +273,12 @@ impl Parser for SequenceParser {
                 CommandType.DeleteRight
             } else if name == "insert_char" {
                 CommandType.DeleteRight
+            } else if name == "insert_tab" {
+                CommandType.Edit(EditCommand.InsertTab)
+            } else if name == "indent_line" {
+                CommandType.Edit(EditCommand.IndentLine)
+            } else if name == "deindent_line" {
+                CommandType.Edit(EditCommand.DeindentLine)
             } else {
                 return Err(fmt.format("Unknown view command: '{}'", [command]))
             }
@@ -502,6 +508,12 @@ impl Chim {
                 }
 
                 GlfwMod.None, KeyEventType.Space -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().insert_char(' ')
+                    return
+                }
+
+                GlfwMod.Shift, KeyEventType.Space -> {
                     view := self.tabs[self.active_tab].get().get_active_view()
                     view.get_mut().insert_char(' ')
                     return
