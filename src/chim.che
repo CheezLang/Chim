@@ -4,6 +4,8 @@ use import std.string
 use import std.array
 use import std.ring_queue
 use import std.unicode
+use import std.fiber
+use import std.mem.std_heap_allocator
 
 mem :: import std.mem.allocator
 io  :: import std.io
@@ -19,6 +21,8 @@ imgui :: import imgui
 
 use import editor
 use import gap_buffer
+use import editor_input
+use import editor_render
 
 vec2 :: imgui.ImVec2
 vec4 :: imgui.ImVec4
@@ -38,78 +42,11 @@ Slot :: struct {
     col : int = 0
 }
 
-PaletteIndex :: enum #tag_type(i32) #copy {
-    Default
-    Keyword
-    Number
-    String
-    CharLiteral
-    Punctuation
-    Preprocessor
-    Identifier
-    KnownIdentifier
-    PreprocIdentifier
-    Comment
-    MultiLineComment
-    Background
-    HighlightedBackground
-    MenuBackground
-    Cursor
-    Selection
-    ErrorMarker
-    Breakpoint
-    LineNumber
-    CurrentLineFill
-    CurrentLineFillInactive
-    CurrentLineEdge
-    Whitespace
-    Max
-}
-
 Command :: enum {
     ChangeFontSize  : f32
     ChangeFont      : String
     TabNext
     TabPrev
-}
-
-Palette :: struct {
-    values : [int(PaletteIndex.Max)]u32
-}
-
-impl Palette {
-    dark :: () -> Palette {
-        mut values : [int(PaletteIndex.Max)]u32 = default
-        *values[int(PaletteIndex.Default)]                      = 0xffbfbfbf
-        *values[int(PaletteIndex.Keyword)]                      = 0xffd69c56
-        *values[int(PaletteIndex.Number)]                       = 0xff00ff00
-        *values[int(PaletteIndex.String)]                       = 0xff7070e0
-        *values[int(PaletteIndex.CharLiteral)]                  = 0xff70a0e0
-        *values[int(PaletteIndex.Punctuation)]                  = 0xffffffff
-        *values[int(PaletteIndex.Preprocessor)]                 = 0xff408080
-        *values[int(PaletteIndex.Identifier)]                   = 0xffaaaaaa
-        *values[int(PaletteIndex.KnownIdentifier)]              = 0xff9bc64d
-        *values[int(PaletteIndex.PreprocIdentifier)]            = 0xffc040a0
-        *values[int(PaletteIndex.Comment)]                      = 0xff206020
-        *values[int(PaletteIndex.MultiLineComment)]             = 0xff406020
-        *values[int(PaletteIndex.Background)]                   = 0xff101010
-        *values[int(PaletteIndex.HighlightedBackground)]        = 0xff171717
-        *values[int(PaletteIndex.MenuBackground)]               = 0xff202020
-        *values[int(PaletteIndex.Cursor)]                       = 0xffe0e0e0
-        *values[int(PaletteIndex.Selection)]                    = 0x80a06020
-        *values[int(PaletteIndex.ErrorMarker)]                  = 0x800020ff
-        *values[int(PaletteIndex.Breakpoint)]                   = 0x40f08000
-        *values[int(PaletteIndex.LineNumber)]                   = 0xff707000
-        *values[int(PaletteIndex.CurrentLineFill)]              = 0x40000000
-        *values[int(PaletteIndex.CurrentLineFillInactive)]      = 0x40808080
-        *values[int(PaletteIndex.CurrentLineEdge)]              = 0x40a0a0a0
-        *values[int(PaletteIndex.Whitespace)]                   = 0xff202020
-        return Palette(values)
-    }
-
-    get :: (&Self, index: PaletteIndex) -> u32 {
-        return *self.values[int(index)]
-    }
 }
 
 Mode :: enum #copy {
@@ -124,7 +61,36 @@ CursorType :: enum #copy {
     Underscore
 }
 
+// <move>   `Left`       -> view.move_cursor_left
+// <normal> i            -> editor.enter_insert_mode
+// <move>   i{c: char}   -> view.move_inside c
+// <normal> f{c: char}   -> view.move_cursor_to c
+// <normal> d{m: mov}    -> view.delete_moved_range m
+// <normal> gd{c: char}{m: mov} -> view.delete_all_occurances_of c m
 
+// gdx{Left}    -> view.delete_all_occurances_of 'x' view.move_cursor_left
+// gdyfl        -> view.delete_all_occurances_of 'y' (view.move_cursor_to 'l')
+
+
+CommandStep :: enum #copy {
+    Key     : KeyEvent
+    Move    : char
+}
+
+CommandParser :: struct {
+    command : String
+    steps   : Array[CommandStep]
+}
+
+impl CommandParser {
+    from_slice :: (command: string, steps: []CommandStep) -> CommandParser {
+        return CommandParser(command.to_owned(), Array[CommandStep].from_slice(steps))
+    }
+
+    parse :: (text: string) -> Result[CommandParser, ()] {
+        return Err()
+    }
+}
 
 Chim :: struct {
     slots           : []mut Slot
@@ -132,19 +98,22 @@ Chim :: struct {
     cursors         := Array[(col: int, row: int, typ: CursorType)].new()
     commands        := RingQueue[Command].new()
 
+    parser_fiber    : ^Fiber = null
+    key_events      := GapBuffer[KeyEvent].new(20, &DEFAULT_STD_HEAP_ALLOCATOR)
+    command_parsers := Array[Rc[CommandParser]].new()
+    active_parsers  := Array[Rc[CommandParser]].new()
+
     // editor stuff
     current_mode    := Mode.Normal
     recording_macro := false
 
     tabs            := Array[Rc[Tab]].new()
+    active_tab      := 0
     buffers         := Array[Rc[Buffer]].new()
-
     current_buffer  := Rc[Buffer].empty()
 
-    active_tab      := 0
-
-    window_pixel_size := vec2(0, 0)
-    has_focus       := false
+    window_pixel_size   := vec2(0, 0)
+    has_focus           := false
 
     // settings
     wrapping_enabled    := true
@@ -208,6 +177,8 @@ impl Chim {
     }
 
     initialize :: (&mut Self, args: []String) {
+        self.parser_fiber = Fiber.new(cast(Fn(^Chim)) Chim.key_input_parser, ^*self)
+
         for row in 0 .. SLOTS_X {
             for col in 0 .. SLOTS_Y {
                 *self.slots[col + row * SLOTS_X] = Slot('´', .Comment, .Background)
@@ -238,6 +209,14 @@ impl Chim {
         } else {
             self.current_buffer = self.buffers[0].clone()
         }
+
+        self.register_command("view.left", [CommandStep.Key(KeyEvent(.None, .Left))])
+        self.register_command("editor.save", [CommandStep.Key(KeyEvent(.Control, .Char('s')))])
+        self.register_command("view.delete_line", [CommandStep.Key(KeyEvent(.None, .Char('d'))), CommandStep.Key(KeyEvent(.None, .Char('d')))])
+    }
+
+    register_command :: (&mut Self, command: string, steps: []CommandStep) {
+        self.command_parsers.add(Rc[CommandParser].new(CommandParser.from_slice(command, steps)))
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {
@@ -257,6 +236,10 @@ impl Chim {
     }
 
     update :: (&mut Self) {
+        if self.key_events.count() > 0 {
+            self.parser_fiber.resume()
+        }
+
         mut font_changed := false
         mut rerender := false
 

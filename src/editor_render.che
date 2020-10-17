@@ -29,6 +29,74 @@ vec4_zero : vec4 = vec4(0, 0, 0, 0)
 
 use import chim
 
+#export_scope
+
+PaletteIndex :: enum #tag_type(i32) #copy {
+    Default
+    Keyword
+    Number
+    String
+    CharLiteral
+    Punctuation
+    Preprocessor
+    Identifier
+    KnownIdentifier
+    PreprocIdentifier
+    Comment
+    MultiLineComment
+    Background
+    HighlightedBackground
+    MenuBackground
+    Cursor
+    Selection
+    ErrorMarker
+    Breakpoint
+    LineNumber
+    CurrentLineFill
+    CurrentLineFillInactive
+    CurrentLineEdge
+    Whitespace
+    Max
+}
+
+Palette :: struct {
+    values : [int(PaletteIndex.Max)]u32
+}
+
+impl Palette {
+    dark :: () -> Palette {
+        mut values : [int(PaletteIndex.Max)]u32 = default
+        *values[int(PaletteIndex.Default)]                      = 0xffbfbfbf
+        *values[int(PaletteIndex.Keyword)]                      = 0xffd69c56
+        *values[int(PaletteIndex.Number)]                       = 0xff00ff00
+        *values[int(PaletteIndex.String)]                       = 0xff7070e0
+        *values[int(PaletteIndex.CharLiteral)]                  = 0xff70a0e0
+        *values[int(PaletteIndex.Punctuation)]                  = 0xffffffff
+        *values[int(PaletteIndex.Preprocessor)]                 = 0xff408080
+        *values[int(PaletteIndex.Identifier)]                   = 0xffaaaaaa
+        *values[int(PaletteIndex.KnownIdentifier)]              = 0xff9bc64d
+        *values[int(PaletteIndex.PreprocIdentifier)]            = 0xffc040a0
+        *values[int(PaletteIndex.Comment)]                      = 0xff206020
+        *values[int(PaletteIndex.MultiLineComment)]             = 0xff406020
+        *values[int(PaletteIndex.Background)]                   = 0xff101010
+        *values[int(PaletteIndex.HighlightedBackground)]        = 0xff171717
+        *values[int(PaletteIndex.MenuBackground)]               = 0xff202020
+        *values[int(PaletteIndex.Cursor)]                       = 0xffe0e0e0
+        *values[int(PaletteIndex.Selection)]                    = 0x80a06020
+        *values[int(PaletteIndex.ErrorMarker)]                  = 0x800020ff
+        *values[int(PaletteIndex.Breakpoint)]                   = 0x40f08000
+        *values[int(PaletteIndex.LineNumber)]                   = 0xff707000
+        *values[int(PaletteIndex.CurrentLineFill)]              = 0x40000000
+        *values[int(PaletteIndex.CurrentLineFillInactive)]      = 0x40808080
+        *values[int(PaletteIndex.CurrentLineEdge)]              = 0x40a0a0a0
+        *values[int(PaletteIndex.Whitespace)]                   = 0xff202020
+        return Palette(values)
+    }
+
+    get :: (&Self, index: PaletteIndex) -> u32 {
+        return *self.values[int(index)]
+    }
+}
 
 impl Chim {
     render_tab :: (&mut Self, tab: &Tab, min: (col: int, row: int), max: (col: int, row: int)) {

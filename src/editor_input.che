@@ -1,6 +1,10 @@
 use import std.string
 use import std.array
 use import std.unicode
+use import std.fiber
+use import std.thread
+use import std.mem.std_heap_allocator
+use import std.rc
 
 io  :: import std.io
 fmt :: import std.fmt
@@ -10,6 +14,7 @@ use import glfw_hl
 
 use import editor
 use import chim
+use import gap_buffer
 
 #export_scope
 
@@ -85,9 +90,112 @@ KeyEvent :: struct #copy {
 }
 
 impl Chim {
+    key_input_parser :: (self: ^Chim) {
+        loop {
+            self.parse(0)
+            Fiber.yield()
+        }
+    }
 
-    handle_key :: (&mut Self, event: KeyEvent) {
-        io.formatln("{}", [&event])
+    parse :: (&mut Self, mut event_index: int) {
+        use GlfwMod
+        use KeyEventType
+
+        mut repeat_count := 0
+
+        State :: enum #copy {
+            Start
+            Command
+        }
+        mut state := State.Start
+
+        self.active_parsers.clear()
+        for &p in self.command_parsers[..] {
+            self.active_parsers.add(p.clone())
+        }
+
+        mut command_index := 0
+
+        loop {
+            while self.key_events.count() <= event_index {
+                Fiber.yield()
+            }
+
+            next_event := *self.key_events[event_index]
+            io.formatln("event_index = {}, command_index = {}, next_event = {}", [event_index, command_index, next_event])
+
+            match state {
+                .Start -> match next_event.mods, next_event.typ {
+                    None, Char($c) if c.is_digit() -> {
+                        repeat_count = repeat_count * 10 + int(c - '0')
+                        event_index += 1
+                    }
+
+                    _ -> {
+                        state = .Command
+                    }
+                }
+
+                .Command -> {
+                    if repeat_count == 0 {
+                        repeat_count = 1
+                    }
+                    io.formatln("repeat_count: {}", [repeat_count])
+                    io.formatln("{} active parsers", [self.active_parsers.count()])
+
+                    mut new_active_parsers := Array[Rc[CommandParser]].new(self.active_parsers.count())
+                    for &p in self.active_parsers[..] {
+                        steps := p.get().steps[..]
+                        if command_index >= steps.length {
+                            continue
+                        }
+                        step := steps[command_index]
+                        match step {
+                            .Key($event) -> {
+                                types_match := match event.typ, next_event.typ {
+                                    Char($c1), Char($c2) -> c1 == c2
+                                    $t1, $t2 -> t1 == t2
+                                }
+                                if event.mods == next_event.mods and types_match {
+                                    new_active_parsers.add(p.clone())
+                                }
+                            }
+
+                            .Move($ch) -> {
+
+                            }
+                        }
+                    }
+                    command_index += 1
+                    self.active_parsers = new_active_parsers
+
+                    io.formatln("reduced to {} active parsers", [self.active_parsers.count()])
+
+                    if self.active_parsers.count() == 0 {
+                        for 0 ..= event_index {
+                            self.key_events.erase(event_index - it)
+                        }
+                        return
+                    } else if self.active_parsers.count() == 1 and command_index == self.active_parsers[0].get().steps.count() {
+                        for 0 ..= event_index {
+                            self.key_events.erase(event_index - it)
+                        }
+                        parser := self.active_parsers[0].get()
+                        io.formatln("finished with parser for '{}' {}", [parser.command.slice(), parser.steps[..]])
+                        return
+                    } else {
+                        event_index += 1
+                    }
+                }
+            }
+        }
+    }
+
+    handle_key_event :: (&mut Self, event: KeyEvent) {
+        // io.formatln("{}", [&event])
+
+        self.key_events.insert(self.key_events.count(), event, &DEFAULT_STD_HEAP_ALLOCATOR)
+
         match self.current_mode {
             .Normal -> match event.mods, event.typ {
                 use GlfwMod
@@ -424,7 +532,7 @@ impl Chim {
                 }
             }
 
-            self.handle_key(KeyEvent(mods, typ))
+            self.handle_key_event(KeyEvent(mods, typ))
         }
     }
 
@@ -438,7 +546,7 @@ impl Chim {
         }
 
         if c == ' ' {
-            self.handle_key(KeyEvent(self.current_mods, KeyEventType.Space))
+            self.handle_key_event(KeyEvent(self.current_mods, KeyEventType.Space))
             return
         }
 
@@ -452,6 +560,6 @@ impl Chim {
             GlfwMod.None, c
         }
 
-        self.handle_key(KeyEvent(mods, KeyEventType.Char(c)))
+        self.handle_key_event(KeyEvent(mods, KeyEventType.Char(c)))
     }
 }
