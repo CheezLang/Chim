@@ -70,6 +70,7 @@ Buffer :: struct {
     allocator   : Rc[ArenaAllocator]
     file        : Option[String]
     lines       : GapBuffer[BufferLine]
+    dirty       : bool
 }
 
 impl Buffer {
@@ -91,6 +92,7 @@ impl Buffer {
             allocator   = arena
             file        = Some(path.to_owned())
             lines       = lines
+            dirty       = false
         )))
     }
 
@@ -103,6 +105,7 @@ impl Buffer {
             allocator   = arena
             file        = .None
             lines       = lines
+            dirty       = true
         ))
     }
 
@@ -119,6 +122,7 @@ impl Buffer {
                 }
 
                 try(fs.write_file(path.slice(), buffer.slice()))
+                @cast(&mut Self, self).dirty = false
                 Ok()
             }
         }
@@ -138,6 +142,7 @@ impl Buffer {
 
     insert_line :: (&mut Self, line: int, text: string) {
         self.lines.insert(line, BufferLine.from_string(text, self.allocator.get()), self.allocator.get())
+        self.dirty = true
     }
 
     insert_string :: (&mut Self, line: int, column: int, text: string) -> int {
@@ -156,6 +161,8 @@ impl Buffer {
             buffer_line.characters.append(c, self.allocator.get())
             char_count += 1
         }
+
+        self.dirty = true
         return char_count
     }
 
@@ -167,9 +174,10 @@ impl Buffer {
         }
 
         buffer_line := self.lines[line]
-
         buffer_line.characters.move_gap(column)
         buffer_line.characters.append(text, self.allocator.get())
+
+        self.dirty = true
     }
 
     erase_line :: (&mut Self, line: int) {
@@ -182,6 +190,8 @@ impl Buffer {
         if self.lines.count() == 0 {
             self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
         }
+
+        self.dirty = true
     }
 
     erase_char :: (&mut Self, line: int, column: int) {
@@ -193,7 +203,7 @@ impl Buffer {
         buffer_line := self.lines[line]
         buffer_line.characters.erase(column)
 
-        return
+        self.dirty = true
     }
 }
 

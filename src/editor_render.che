@@ -595,6 +595,10 @@ impl Chim {
             }
 
             col = self.render_text_at(col, row, name, fg, bg)
+
+            if view.get().buffer.get().dirty {
+                col = self.render_char_at(col, row, '*', .Keyword, bg)
+            }
         }
 
         cols, _ := self.get_window_dim()
