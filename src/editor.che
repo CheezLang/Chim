@@ -215,6 +215,7 @@ View :: struct {
     highlight_curr_line := Option[bool].None
     show_whitespace     := Option[bool].None
     tab_width           := Option[int].None
+    cursor_margin       := Option[int].None
 }
 
 impl View {
@@ -305,6 +306,11 @@ impl View {
 
     move_cursor_line :: (&mut Self, lines: int) {
         cursor.line += lines
+        self.clamp_or_wrap_cursor_position(wrap=false)
+    }
+
+    set_cursor_line :: (&mut Self, line: int) {
+        cursor.line = line
         self.clamp_or_wrap_cursor_position(wrap=false)
     }
 

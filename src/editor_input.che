@@ -163,6 +163,8 @@ SequenceParser :: struct {
     command : String
     args    : Array[String]
 
+    count   : int
+
     parsers : Array[Rc[Parser]]
     current : int
     _state  : ParserState
@@ -187,6 +189,7 @@ impl SequenceParser {
         return Rc[Parser].new(SequenceParser(
             command = main
             args    = args
+            count   = 0
             parsers = new_parsers
             current = 0
             _state  = .InProgress
@@ -212,65 +215,72 @@ impl Parser for SequenceParser {
 
         if command.starts_with("move.") {
             name := command[5..]
-            if name == "left" {
-                return Ok(Command.Move(MoveCommand.Left))
+            typ := if name == "left" {
+                CommandType.Move(MoveCommand.Left)
             } else if name == "right" {
-                return Ok(Command.Move(MoveCommand.Right))
+                CommandType.Move(MoveCommand.Right)
             } else if name == "up" {
-                return Ok(Command.Move(MoveCommand.Up))
+                CommandType.Move(MoveCommand.Up)
             } else if name == "down" {
-                return Ok(Command.Move(MoveCommand.Down))
+                CommandType.Move(MoveCommand.Down)
             } else if name == "line_home" {
-                return Ok(Command.Move(MoveCommand.Home))
+                CommandType.Move(MoveCommand.Home)
             } else if name == "line_end" {
-                return Ok(Command.Move(MoveCommand.End))
+                CommandType.Move(MoveCommand.End)
             } else if name == "buffer_home" {
-                return Ok(Command.Move(MoveCommand.BufferHome))
+                CommandType.Move(MoveCommand.BufferHome)
             } else if name == "buffer_end" {
-                return Ok(Command.Move(MoveCommand.BufferEnd))
+                CommandType.Move(MoveCommand.BufferEnd)
             } else if name == "page_up" {
-                return Ok(Command.Move(MoveCommand.PageUp))
+                CommandType.Move(MoveCommand.PageUp)
             } else if name == "page_down" {
-                return Ok(Command.Move(MoveCommand.PageDown))
+                CommandType.Move(MoveCommand.PageDown)
+            } else if name == "goto_line_absolute" {
+                CommandType.Move(MoveCommand.GoToLineAbsolute)
+            } else if name == "goto_line_relative_top" {
+                CommandType.Move(MoveCommand.GoToLineRelativeTop)
             } else {
                 return Err(fmt.format("Unknown move command: '{}'", [command]))
             }
 
+            return Ok(Command(self.count, typ))
         } else if command.starts_with("editor.") {
             name := command[7..]
 
-            if name == "tab_next" {
-                return Ok(Command.TabNext)
+            typ := if name == "tab_next" {
+                CommandType.TabNext
             } else if name == "tab_prev" {
-                return Ok(Command.TabPrev)
+                CommandType.TabPrev
             } else if name == "mode_insert" {
-                return Ok(Command.SwitchMode(Mode.Insert))
+                CommandType.SwitchMode(Mode.Insert)
             } else if name == "mode_normal" {
-                return Ok(Command.SwitchMode(Mode.Normal))
+                CommandType.SwitchMode(Mode.Normal)
             } else if name == "buffer_save" {
-                return Ok(Command.BufferSave)
+                CommandType.BufferSave
             } else {
                 return Err(fmt.format("Unknown editor command: '{}'", [command]))
             }
+
+            return Ok(Command(self.count, typ))
         } else if command.starts_with("view.") {
             name := command[5..]
 
-            if name == "delete_line" {
-                return Ok(Command.DeleteLine)
+            typ := if name == "delete_line" {
+                CommandType.DeleteLine
             } else if name == "delete_left" {
-                return Ok(Command.DeleteLeft)
+                CommandType.DeleteLeft
             } else if name == "delete_right" {
-                return Ok(Command.DeleteRight)
+                CommandType.DeleteRight
             } else if name == "insert_char" {
-                return Ok(Command.DeleteRight)
+                CommandType.DeleteRight
             } else {
-                return Err(fmt.format("Unknown command: '{}'", [command]))
+                return Err(fmt.format("Unknown view command: '{}'", [command]))
             }
+
+            return Ok(Command(self.count, typ))
         } else {
             return Err(fmt.format("Unknown command: '{}'", [command]))
         }
-
-        return Ok(Command.TabNext)
     }
 
     advance :: (&mut Self, event: KeyEvent) {
@@ -278,6 +288,16 @@ impl Parser for SequenceParser {
 
         match self._state {
             .InProgress -> {
+                if self.current == 0 and event.mods == .None {
+                    match event.typ {
+                        .Char($ch) if ch.is_digit() -> {
+                            self.count = self.count * 10 + int(ch - '0')
+                            return
+                        }
+                        _ -> {}
+                    }
+                }
+
                 if self.current >= self.parsers.count() {
                     self._state = .Error
                 } else {
@@ -292,6 +312,9 @@ impl Parser for SequenceParser {
                         .Success -> {
                             self.current += 1
                             if self.current == self.parsers.count() {
+                                if self.count == 0 {
+                                    self.count = 1
+                                }
                                 self._state = .Success
                             }
                         }

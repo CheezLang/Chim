@@ -43,6 +43,8 @@ Slot :: struct {
 
 MoveCommand :: enum {
     Left, Right, Up, Down
+    GoToLineAbsolute
+    GoToLineRelativeTop
     Home, End
     BufferHome, BufferEnd
     PageUp, PageDown
@@ -50,7 +52,7 @@ MoveCommand :: enum {
     ViewGoBeforeChar    : char
 }
 
-Command :: enum {
+CommandType :: enum {
     Move            : MoveCommand
     SwitchMode      : Mode
     ChangeFontSize  : f32
@@ -59,6 +61,11 @@ Command :: enum {
     DeleteLeft, DeleteRight
     DeleteLine
     BufferSave
+}
+
+Command :: struct {
+    count   : int
+    typ     : CommandType
 }
 
 Mode :: enum #copy {
@@ -122,6 +129,7 @@ Chim :: struct {
     line_number_mode    := LineNumberMode.RelativeCursor
     show_whitespace     := true
     tab_width           := 4
+    cursor_margin       := 0
 
     // modifiers, keys, etc.
     current_mods_l  := GlfwMod.None
@@ -222,6 +230,8 @@ impl Chim {
             self.register_move_command(.Normal, "move.buffer_end", [KeyParser.new(.End, .Control)])
             self.register_move_command(.Normal, "move.page_up", [KeyParser.new(.PageUp)])
             self.register_move_command(.Normal, "move.page_down", [KeyParser.new(.PageDown)])
+            self.register_move_command(.Normal, "move.goto_line_absolute", [KeyParser.new(.Char('g')), KeyParser.new(.Char('l'))])
+            self.register_move_command(.Normal, "move.goto_line_relative_top", [KeyParser.new(.Char('g')), KeyParser.new(.Char('t'))])
     
             // alternative key bindings
             self.register_command(.Normal, "move.buffer_home", [KeyParser.new(.Char('g')), KeyParser.new(.Char('h'))])
@@ -290,11 +300,11 @@ impl Chim {
     }
 
     set_font :: (&mut Self, path: string) {
-        self.commands.push(.ChangeFont(path.to_owned()))
+        self.commands.push(Command(1, .ChangeFont(path.to_owned())))
     }
 
     set_font_size :: (&mut Self, size: f32) {
-        self.commands.push(.ChangeFontSize(size))
+        self.commands.push(Command(1, .ChangeFontSize(size)))
     }
 
     update :: (&mut Self) {
@@ -302,10 +312,11 @@ impl Chim {
         mut rerender := false
 
         while self.commands.count() > 0 {
-            match self.commands.pop() {
+            command := self.commands.pop()
+            match &command.typ {
                 .ChangeFontSize($size) -> {
-                    if size >= 10 {
-                        self.font_size = size
+                    if *size >= 10 {
+                        self.font_size = *size
                         font_changed = true
                     }
                 }
@@ -317,7 +328,7 @@ impl Chim {
                 }
 
                 .SwitchMode($mode) -> {
-                    self.current_mode = mode
+                    self.current_mode = *mode
                 }
 
                 .BufferSave -> {
@@ -328,79 +339,119 @@ impl Chim {
                 }
 
                 .TabNext -> {
-                    self.active_tab = (self.active_tab + 1) % self.tabs.count()
+                    for 0 .. command.count {
+                        self.active_tab = (self.active_tab + 1) % self.tabs.count()
+                    }
                 }
 
                 .TabPrev -> {
-                    self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
+                    for 0 .. command.count {
+                        self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
+                    }
                 }
 
                 .DeleteLine -> {
                     view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().delete_line()
+                    for 0 .. command.count {
+                        view.get_mut().delete_line()
+                    }
                 }
 
                 .DeleteLeft -> {
                     view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().delete_at_cursor()
+                    for 0 .. command.count {
+                        view.get_mut().delete_at_cursor()
+                    }
                 }
 
                 .DeleteRight -> {
                     view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().move_cursor_column(1)
-                    view.get_mut().delete_at_cursor()
-                }
+                    for 0 .. command.count {
+                        view.get_mut().move_cursor_column(1)
+                        view.get_mut().delete_at_cursor()
+                    }
+            }
 
-                .Move($move) -> {
-                    match move {
+            .Move($move) -> {
+                match move {
                         .Left -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_column(-1)
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_column(-1)
+                            }
                         }
 
                         .Right -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_column(1)
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_column(1)
+                            }
                         }
 
                         .Up -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_line(-1)
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_line(-1)
+                            }
                         }
 
                         .Down -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_line(1)
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_line(1)
+                            }
                         }
 
                         .Home -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_column_beginning()
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_column_beginning()
+                            }
                         }
 
                         .End -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_column_end()
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_column_end()
+                            }
                         }
 
                         .BufferHome -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_beginning()
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_beginning()
+                            }
                         }
 
                         .BufferEnd -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_end()
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_end()
+                            }
                         }
 
                         .PageUp -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2)
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2)
+                            }
                         }
 
                         .PageDown -> {
                             view := self.tabs[self.active_tab].get().get_active_view()
-                            view.get_mut().move_cursor_line(self.get_window_dim().rows / 2)
+                            for 0 .. command.count {
+                                view.get_mut().move_cursor_line(self.get_window_dim().rows / 2)
+                            }
+                        }
+
+                        .GoToLineAbsolute -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().set_cursor_line(command.count - 1)
+                        }
+
+                        .GoToLineRelativeTop -> {
+                            view := self.tabs[self.active_tab].get().get_active_view()
+                            view.get_mut().set_cursor_line(view.get().top_line + command.count - 1)
                         }
 
                         $cmd -> {

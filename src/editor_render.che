@@ -151,6 +151,7 @@ impl Chim {
         line_number_mode    := view.line_number_mode.unwrap_or(self.line_number_mode)
         show_whitespace     := view.show_whitespace.unwrap_or(self.show_whitespace)
         tab_width           := view.tab_width.unwrap_or(self.tab_width)
+        cursor_margin       := view.cursor_margin.unwrap_or(self.cursor_margin).clamp(0, (bounds_max.row - bounds_min.row) / 2)
 
         count_digits :: (mut n: int) -> int {
             if n == 0 {
@@ -191,14 +192,14 @@ impl Chim {
         mut cursor_scroll := 0
         bounds : (cols: int, rows: int) = (bounds_max.col - bounds_min.col - line_number_digits, bounds_max.row - bounds_min.row)
         {
-            view.scroll_to_cursor(bounds.cols, bounds.rows, 5)
+            view.scroll_to_cursor(bounds.cols, bounds.rows, cursor_margin)
 
             if wrapping_enabled {
                 mut visual := calculate_visual_cursor((view.cursor, view.cursor), &buffer.lines, view.top_line, view.top_line + bounds.rows, bounds, true)
                 visual.line -= view.top_line
 
                 for view.top_line .. view.top_line + bounds.rows {
-                    if visual.line + 5 < bounds.rows {
+                    if visual.line + cursor_margin < bounds.rows {
                         break
                     }
                     line_length := buffer.lines[it].characters.count()
@@ -780,6 +781,12 @@ impl Chim {
             if imgui.InputInt("Tab width", ^mut tab_width, -1, -1, .None) {
                 self.tab_width = int(tab_width).clamp(1, 8)
             }
+
+            mut cursor_margin := i32(self.cursor_margin)
+            if imgui.InputInt("Cursor margin", ^mut cursor_margin, -1, -1, .None) {
+                self.cursor_margin = int(cursor_margin).clamp(0, 100)
+            }
+
 
             mut lnm := i32(self.line_number_mode)
             if imgui.Combo_3("Line numbers", ^mut lnm, (data, index, out) => {
