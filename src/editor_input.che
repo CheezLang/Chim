@@ -627,6 +627,26 @@ impl Chim {
         }
 
         if action == .Press or action == .Repeat {
+            if mods != .None and mods != .Shift {
+                key_name_c := glfwGetKeyName(key, scancode)
+                if key_name_c != null {
+                    key_name := string.from_cstring(key_name_c)
+                    ch, _ := Utf8.decode(key_name.bytes)
+                    if ch == 'e' and (GlfwMod.Control or GlfwMod.Alt is in mods) {
+                        self.handle_key_event(KeyEvent(mods and !(GlfwMod.Control or GlfwMod.Alt), KeyEventType.Char('€')))
+                        return
+                    }
+                    if ch == 'q' and (GlfwMod.Control or GlfwMod.Alt is in mods) {
+                        self.handle_key_event(KeyEvent(mods and !(GlfwMod.Control or GlfwMod.Alt), KeyEventType.Char('@')))
+                        return
+                    }
+                    if ch.is_alpha() {
+                        self.handle_key_event(KeyEvent(mods, KeyEventType.Char(ch)))
+                        return
+                    }
+                }
+            }
+
             mut mods := self.current_mods
             typ := match key {
                 GlfwKey._0 if mods == .Control -> KeyEventType.Char('0')
@@ -639,44 +659,6 @@ impl Chim {
                 GlfwKey._7 if mods == .Control -> KeyEventType.Char('7')
                 GlfwKey._8 if mods == .Control -> KeyEventType.Char('8')
                 GlfwKey._9 if mods == .Control -> KeyEventType.Char('9')
-                GlfwKey.A if mods != .None and mods != .Shift -> KeyEventType.Char('a')
-                GlfwKey.B if mods != .None and mods != .Shift -> KeyEventType.Char('b')
-                GlfwKey.C if mods != .None and mods != .Shift -> KeyEventType.Char('c')
-                GlfwKey.D if mods != .None and mods != .Shift -> KeyEventType.Char('d')
-                GlfwKey.E if (GlfwMod.Control or GlfwMod.Alt is in mods) -> {
-                    mods = mods and !(GlfwMod.Control or GlfwMod.Alt)
-                    KeyEventType.Char('€')
-                }
-                GlfwKey.E if mods != .None and mods != .Shift -> KeyEventType.Char('e')
-                GlfwKey.F if mods != .None and mods != .Shift -> KeyEventType.Char('f')
-                GlfwKey.G if mods != .None and mods != .Shift -> KeyEventType.Char('g')
-                GlfwKey.H if mods != .None and mods != .Shift -> KeyEventType.Char('h')
-                GlfwKey.I if mods != .None and mods != .Shift -> KeyEventType.Char('i')
-                GlfwKey.J if mods != .None and mods != .Shift -> KeyEventType.Char('j')
-                GlfwKey.K if mods != .None and mods != .Shift -> KeyEventType.Char('k')
-                GlfwKey.L if mods != .None and mods != .Shift -> KeyEventType.Char('l')
-                GlfwKey.M if mods != .None and mods != .Shift -> KeyEventType.Char('m')
-                GlfwKey.N if mods != .None and mods != .Shift -> KeyEventType.Char('n')
-                GlfwKey.O if mods != .None and mods != .Shift -> KeyEventType.Char('o')
-                GlfwKey.P if mods != .None and mods != .Shift -> KeyEventType.Char('p')
-                GlfwKey.Q if (GlfwMod.Control or GlfwMod.Alt is in mods) -> {
-                    mods = mods and !(GlfwMod.Control or GlfwMod.Alt)
-                    KeyEventType.Char('@')
-                }
-                GlfwKey.Q if mods != .None and mods != .Shift -> KeyEventType.Char('q')
-                GlfwKey.R if mods != .None and mods != .Shift -> KeyEventType.Char('r')
-                GlfwKey.S if mods != .None and mods != .Shift -> KeyEventType.Char('s')
-                GlfwKey.T if mods != .None and mods != .Shift -> KeyEventType.Char('t')
-                GlfwKey.U if mods != .None and mods != .Shift -> KeyEventType.Char('u')
-                GlfwKey.V if mods != .None and mods != .Shift -> KeyEventType.Char('v')
-                GlfwKey.W if mods != .None and mods != .Shift -> KeyEventType.Char('w')
-                GlfwKey.X if mods != .None and mods != .Shift -> KeyEventType.Char('x')
-                GlfwKey.Y if mods != .None and mods != .Shift -> KeyEventType.Char('y')
-                GlfwKey.Z if mods != .None and mods != .Shift -> KeyEventType.Char('z')
-
-                GlfwKey.Apostrophe  if (GlfwMod.Control is in mods) or (GlfwMod.Alt is in mods) -> KeyEventType.Char('ä')
-                GlfwKey.Semicolon   if (GlfwMod.Control is in mods) or (GlfwMod.Alt is in mods) -> KeyEventType.Char('ö')
-                GlfwKey.LeftBracket if (GlfwMod.Control is in mods) or (GlfwMod.Alt is in mods) -> KeyEventType.Char('ü')
 
                 GlfwKey.Space if self.current_mods != .None -> KeyEventType.Space
                 GlfwKey.Escape -> KeyEventType.Escape
