@@ -1,0 +1,5 @@
+- Memory leak in parsing keyboard input or somewhere related
+- Tab characters don't display correctly on wrapped lines
+
++ Undo and redo are now implemented
++ and it works

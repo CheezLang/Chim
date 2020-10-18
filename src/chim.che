@@ -54,8 +54,8 @@ MoveCommand :: enum {
 
 EditCommand :: enum {
     InsertTab
-    IndentLine
-    DeindentLine
+    IndentLine, DeindentLine
+    Undo, Redo
 }
 
 CommandType :: enum {
@@ -251,12 +251,14 @@ impl Chim {
             self.register_command(.Normal, "editor.buffer_save", [KeyParser.new(.Char('s'), .Control)])
             self.register_command(.Normal, "editor.mode_insert", [KeyParser.new(.Char('i'))])
 
-            // view commands
+            // buffer commands
             self.register_command(.Normal, "buffer.delete_left", [KeyParser.new(.Backspace)])
             self.register_command(.Normal, "buffer.delete_right", [KeyParser.new(.Delete)])
             self.register_command(.Normal, "buffer.delete_line", [KeyParser.new(.Char('d')), KeyParser.new(.Char('d'))])
             self.register_command(.Normal, "buffer.indent_line", [KeyParser.new(.Tab)])
             self.register_command(.Normal, "buffer.deindent_line", [KeyParser.new(.Tab, .Shift)])
+            self.register_command(.Normal, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
+            self.register_command(.Normal, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
         }
 
         { // insert mode key bindings
@@ -283,6 +285,8 @@ impl Chim {
             self.register_command(.Insert, "buffer.delete_left", [KeyParser.new(.Backspace)])
             self.register_command(.Insert, "buffer.delete_right", [KeyParser.new(.Delete)])
             self.register_command(.Insert, "buffer.insert_tab", [KeyParser.new(.Tab)])
+            self.register_command(.Insert, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
+            self.register_command(.Insert, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
         }
     }
 
@@ -467,6 +471,16 @@ impl Chim {
                             }
                         }
                         view.get_mut().clamp_or_wrap_cursor_position(false)
+                    }
+
+                    .Undo -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().undo()
+                    }
+
+                    .Redo -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        view.get_mut().redo()
                     }
 
                     $cmd -> {

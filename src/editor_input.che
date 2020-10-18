@@ -279,6 +279,10 @@ impl Parser for SequenceParser {
                 CommandType.Edit(EditCommand.IndentLine)
             } else if name == "deindent_line" {
                 CommandType.Edit(EditCommand.DeindentLine)
+            } else if name == "undo" {
+                CommandType.Edit(EditCommand.Undo)
+            } else if name == "redo" {
+                CommandType.Edit(EditCommand.Redo)
             } else {
                 return Err(fmt.format("Unknown view command: '{}'", [command]))
             }

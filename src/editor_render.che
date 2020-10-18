@@ -758,15 +758,18 @@ impl Chim {
             imgui.Begin("Debug", null, .None)
             defer imgui.End()
 
-            // show states of modifiers
-            mut control := GlfwMod.Control is in current_mods
-            imgui.Checkbox("Control", ^mut control)
-            mut shift := GlfwMod.Shift is in current_mods
-            imgui.Checkbox("Shift", ^mut shift)
-            mut alt := GlfwMod.Alt is in current_mods
-            imgui.Checkbox("Alt", ^mut alt)
-            mut super := GlfwMod.Super is in current_mods
-            imgui.Checkbox("Super", ^mut super)
+            if imgui.SmallButton("group changes") {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                view.get().buffer.get_mut().group_changes()
+            }
+            if imgui.SmallButton("undo") {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                view.get_mut().undo()
+            }
+            if imgui.SmallButton("redo") {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                view.get_mut().redo()
+            }
 
             imgui.Separator()
 

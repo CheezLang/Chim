@@ -97,11 +97,11 @@ impl(T: type) GapBuffer[T] {
         self.gap0 += 1
     }
 
-    erase :: (&mut Self, index: int) {
+    erase :: (&mut Self, index: int) -> T {
         @assert(index >= 0 and index < self.count())
         self.move_gap(index + 1)
         self.gap0 -= 1
-        Memory.drop(self.elements[self.gap0])
+        return *self.elements[self.gap0]
     }
 
     move_gap :: (&mut Self, index: int) {
