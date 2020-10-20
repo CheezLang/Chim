@@ -288,6 +288,19 @@ impl Parser for SequenceParser {
             }
 
             return Ok(Command(self.count, typ))
+
+        } else if command.starts_with("view.") {
+            name := command[5..]
+
+            typ := if name == "add_cursor_above" {
+                CommandType.View(ViewCommand.AddCursorAbove)
+            } else if name == "add_cursor_below" {
+                CommandType.View(ViewCommand.AddCursorBelow)
+            } else {
+                return Err(fmt.format("Unknown view command: '{}'", [command]))
+            }
+
+            return Ok(Command(self.count, typ))
         } else {
             return Err(fmt.format("Unknown command: '{}'", [command]))
         }

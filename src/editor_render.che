@@ -213,6 +213,9 @@ impl Chim {
 
         mut visual_cursors := Array[(actual: Position, visual: Position, scroll: int)].new()
         visual_cursors.add((view.cursor, view.cursor, 0))
+        for cursor in view.cursors[..] {
+            visual_cursors.add((cursor.start, cursor.start, 0))
+        }
         for &mut cursor in visual_cursors.slice_mut() {
             cursor.visual.line -= view.top_line
         }

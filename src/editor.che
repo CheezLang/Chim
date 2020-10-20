@@ -412,11 +412,28 @@ LineNumberMode :: enum #tag_type(i32) #repr("C") #copy {
     RelativeTop
 }
 
+Cursor :: struct #copy {
+    start   : Position
+    end     : Position
+}
+
+impl Cursor {
+    at :: (pos: Position) -> Cursor {
+        return Cursor(pos, pos)
+    }
+
+    range :: (start: Position, end: Position) -> Cursor {
+        return Cursor(start, end)
+    }
+}
+
 View :: struct {
     buffer      : Rc[Buffer]
 
     top_line    : int = 0
+
     cursor      := Position()
+    cursors     := Array[Cursor].new()
 
     line_number_mode    := Option[LineNumberMode].None
     wrapping_enabled    := Option[bool].None
@@ -439,6 +456,13 @@ impl View {
         }
         if self.top_line < 0 {
             self.top_line = 0
+        }
+    }
+
+    add_cursor_below :: (&mut Self) {
+        last_cursor := if cursors.count() == 0 then cursor else cursors.peek_last().start
+        if last_cursor.line < buffer.get().lines.count() + 1 {
+            cursors.add(Cursor.at(Position(last_cursor.line + 1, last_cursor.column)))
         }
     }
 
