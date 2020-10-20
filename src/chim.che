@@ -92,17 +92,6 @@ CursorType :: enum #copy {
     Underscore
 }
 
-// <move>   `Left`       -> view.move_cursor_left
-// <normal> i            -> editor.enter_insert_mode
-// <move>   i{c: char}   -> view.move_inside c
-// <normal> f{c: char}   -> view.move_cursor_to c
-// <normal> d{m: mov}    -> view.delete_moved_range m
-// <normal> gd{c: char}{m: mov} -> view.delete_all_occurances_of c m
-
-// gdx{Left}    -> view.delete_all_occurances_of 'x' view.move_cursor_left
-// gdyfl        -> view.delete_all_occurances_of 'y' (view.move_cursor_to 'l')
-
-
 
 Chim :: struct {
     slots           : []mut Slot

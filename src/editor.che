@@ -17,6 +17,28 @@ Position :: struct #copy {
     column  : int = 0
 }
 
+impl Position {
+    less :: (Self, other: Position) -> bool #operator("<") {
+        return self.line < other.line or (self.line == other.line and self.column < other.column)
+    }
+
+    less_equal :: (Self, other: Position) -> bool #operator("<=") {
+        return self.line < other.line or (self.line == other.line and self.column <= other.column)
+    }
+
+    equal :: (Self, other: Position) -> bool #operator("==") {
+        return self.line == other.line and self.column == other.column
+    }
+
+    greater :: (Self, other: Position) -> bool #operator(">") {
+        return self.line > other.line or (self.line == other.line and self.column > other.column)
+    }
+
+    greater_equal :: (Self, other: Position) -> bool #operator(">=") {
+        return self.line > other.line or (self.line == other.line and self.column >= other.column)
+    }
+}
+
 BufferLine :: struct {
     characters : GapBuffer[char]
 }
@@ -425,6 +447,34 @@ impl Cursor {
     range :: (start: Position, end: Position) -> Cursor {
         return Cursor(start, end)
     }
+
+    low :: (&Self) -> Position {
+        return if start <= end then start else end
+    }
+
+    high :: (&Self) -> Position {
+        return if start >= end then start else end
+    }
+
+    less :: (&Self, other: &Cursor) -> bool #operator("<") {
+        return self.low() < other.low()
+    }
+
+    less_equal :: (&Self, other: &Cursor) -> bool #operator("<=") {
+        return self.low() <= other.low()
+    }
+
+    equal :: (&Self, other: &Cursor) -> bool #operator("==") {
+        return self.low() == other.low()
+    }
+
+    greater :: (&Self, other: &Cursor) -> bool #operator(">") {
+        return self.low() > other.low()
+    }
+
+    greater_equal :: (&Self, other: &Cursor) -> bool #operator(">=") {
+        return self.low() >= other.low()
+    }
 }
 
 View :: struct {
@@ -485,7 +535,7 @@ impl View {
     }
 
     insert_char :: (&mut Self, text: char) {
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
         self.buffer.get_mut().insert_char(cursor.line, cursor.column, text)
         if text == '`n' {
             self.cursor.line += 1
@@ -493,18 +543,18 @@ impl View {
         } else {
             self.cursor.column += 1
         }
-        self.clamp_or_wrap_cursor_position(wrap=true)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
     }
 
     delete_line :: (&mut Self) {
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
         self.buffer.get_mut().erase_line(self.cursor.line)
         self.cursor.column = 0
-        self.clamp_or_wrap_cursor_position(wrap=true)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
     }
 
     delete_at_cursor :: (&mut Self) {
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
         if self.cursor.column == 0 {
             if self.cursor.line > 0 {
                 self.cursor.line -= 1
@@ -517,7 +567,7 @@ impl View {
             self.cursor.column -= 1
             self.buffer.get_mut().erase_char(self.cursor.line, self.cursor.column)
         }
-        self.clamp_or_wrap_cursor_position(wrap=true)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
     }
 
     move_cursor_beginning :: (&mut Self) {
@@ -531,84 +581,89 @@ impl View {
     }
 
     move_cursor_column_beginning :: (&mut Self) {
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
         self.cursor.column = 0
     }
 
     move_cursor_column_end :: (&mut Self) {
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
         self.cursor.column = self.buffer.get().lines[self.cursor.line].characters.count()
     }
 
     move_cursor_column :: (&mut Self, columns: int) {
         self.cursor.column += columns
-        self.clamp_or_wrap_cursor_position(wrap=true)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
     }
 
     move_cursor_line :: (&mut Self, lines: int) {
         cursor.line += lines
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
     }
 
     set_cursor_line :: (&mut Self, line: int) {
         cursor.line = line
-        self.clamp_or_wrap_cursor_position(wrap=false)
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
     }
 
     clamp_or_wrap_cursor_position :: (&mut Self, wrap: bool) {
+        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap)
+    }
+
+    clamp_or_wrap_position :: (&Self, position: Position, wrap: bool) -> Position {
         buffer := self.buffer.get()
         if buffer.lines.count() == 0 {
-            self.cursor.line = 0
-            self.cursor.column = 0
-        } else if self.cursor.line < 0 {
-            // line < 0, clamp line and column
-            self.cursor.line = 0
-
-            // clamp column
-            line := buffer.lines[self.cursor.line]
-            if self.cursor.column < 0 {
-                self.cursor.column = 0
-            } else if self.cursor.column > line.characters.count() {
-                self.cursor.column = line.characters.count()
+            return Position(0, 0)
+        } else if position.line < 0 {
+            line := buffer.lines[0]
+            if position.column < 0 {
+                return Position(0, 0)
+            } else if position.column > line.characters.count() {
+                return Position(0, line.characters.count())
+            } else {
+                return Position(0, position.column)
             }
-        } else if self.cursor.line >= buffer.lines.count() {
-            // line past end, clamp line and column
-            self.cursor.line = buffer.lines.count() - 1
-
-            // clamp column
-            line := buffer.lines[self.cursor.line]
-            if self.cursor.column < 0 {
-                self.cursor.column = 0
-            } else if self.cursor.column > line.characters.count() {
-                self.cursor.column = line.characters.count()
+        } else if position.line >= buffer.lines.count() {
+            line := buffer.lines[position.line - 1]
+            if position.column < 0 {
+                return Position(buffer.lines.count() - 1, 0)
+            } else if position.column > line.characters.count() {
+                return Position(buffer.lines.count() - 1, line.characters.count())
+            } else {
+                return Position(buffer.lines.count() - 1, position.column)
             }
         } else {
             // line is in range, wrap column
-            line := buffer.lines[self.cursor.line]
+            line := buffer.lines[position.line]
 
             if wrap {
-                if self.cursor.column < 0 {
-                    self.cursor.line -= 1
-                    if self.cursor.line >= 0 {
-                        self.cursor.column += buffer.lines[self.cursor.line].characters.count() + 1
-                    }
-                    self.clamp_or_wrap_cursor_position(wrap)
-                } else if self.cursor.column > line.characters.count() {
-                    if self.cursor.line < buffer.lines.count() - 1 {
-                        // move to next line and wrap
-                        self.cursor.column -= buffer.lines[self.cursor.line].characters.count() + 1
-                        self.cursor.line += 1
-                        self.clamp_or_wrap_cursor_position(wrap)
+                if position.column < 0 {
+                    if position.line > 0 {
+                        return self.clamp_or_wrap_position(Position(
+                            line    = position.line - 1
+                            column  = position.column + buffer.lines[position.line - 1].characters.count() + 1
+                        ), wrap)
                     } else {
-                        // clamp
-                        self.cursor.column = line.characters.count()
+                        return Position(position.line, 0)
                     }
+                } else if position.column > line.characters.count() {
+                    if position.line < buffer.lines.count() - 1 {
+                        return self.clamp_or_wrap_position(Position(
+                            line    =  position.line + 1
+                            column  = position.column - line.characters.count() - 1
+                        ), wrap)
+                    } else {
+                        return Position(position.line, line.characters.count())
+                    }
+                } else {
+                    return position
                 }
             } else {
-                if self.cursor.column < 0 {
-                    self.cursor.column = 0
-                } else if self.cursor.column > line.characters.count() {
-                    self.cursor.column = line.characters.count()
+                if position.column < 0 {
+                    return Position(position.line, 0)
+                } else if position.column > line.characters.count() {
+                    return Position(position.line, line.characters.count())
+                } else {
+                    return position
                 }
             }
         }
