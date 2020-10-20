@@ -216,7 +216,6 @@ impl Chim {
         mut visual_cursors := Array[(actual: Position, visual: Position, scroll: int)].new()
         for cursor in view.cursors[..] {
             visual_cursors.add((cursor.start, cursor.start, 0))
-            visual_cursors.add((cursor.end, cursor.end, 0))
         }
         for &mut cursor in visual_cursors.slice_mut() {
             cursor.visual.line -= view.top_line
@@ -287,6 +286,18 @@ impl Chim {
                         if wrapping_enabled {
                             mut col := 0
                             for 0 .. line.characters.count() {
+                                pos := Position(line_index, it)
+
+                                // selection
+                                mut selected := false
+                                for &c in view.cursors[..] {
+                                    if pos >= c.low() and pos < c.high() {
+                                        selected = true
+                                        break
+                                    }
+                                }
+                                bg := if selected then PaletteIndex.Selection else bg
+
                                 if col >= bounds.cols {
                                     // fill rest of column with background color
                                     for bounds_min.col + line_number_digits + col .. bounds_max.col {
@@ -339,6 +350,18 @@ impl Chim {
                                 }
 
                                 for offset_left .. (bounds.cols - offset_right) {
+                                    pos := Position(line_index, it + cursor_scroll)
+        
+                                    // selection
+                                    mut selected := false
+                                    for &c in view.cursors[..] {
+                                        if pos >= c.low() and pos < c.high() {
+                                            selected = true
+                                            break
+                                        }
+                                    }
+                                    bg := if selected then PaletteIndex.Selection else bg
+
                                     if it + cursor_scroll >= line.characters.count() {
                                         break
                                     }
@@ -354,6 +377,18 @@ impl Chim {
                                 }
                             } else {
                                 for 0 .. (bounds_max.col - bounds_min.col - 3) {
+                                    pos := Position(line_index, it)
+
+                                    // selection
+                                    mut selected := false
+                                    for &c in view.cursors[..] {
+                                        if pos >= c.low() and pos < c.high() {
+                                            selected = true
+                                            break
+                                        }
+                                    }
+                                    bg := if selected then PaletteIndex.Selection else bg
+
                                     col := bounds_min.col + line_number_digits + it
                                     ch  := *line.characters[it]
                                     *self.slots[col + r * SLOTS_X] = Slot(ch, .Default, bg)
@@ -369,12 +404,25 @@ impl Chim {
                     } else {
                         mut col := 0
                         for 0 .. line.characters.count() {
+                            pos := Position(line_index, it)
+
+                            // selection
+                            mut selected := false
+                            for &c in view.cursors[..] {
+                                if pos >= c.low() and pos < c.high() {
+                                    selected = true
+                                    break
+                                }
+                            }
+                            bg := if selected then PaletteIndex.Selection else bg
+
                             match *line.characters[it_index] {
                                 '`t' -> {
                                     required_spaces := tab_width - col % tab_width
                                     for 0 .. required_spaces {
                                         actual_col := bounds_min.col + line_number_digits + col
                                         c := if show_whitespace then '`t' else '`0'
+
                                         *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
 
                                         // shift all cursors on this line
