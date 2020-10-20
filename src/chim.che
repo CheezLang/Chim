@@ -43,11 +43,17 @@ Slot :: struct {
 
 MoveCommand :: enum {
     Left, Right, Up, Down
-    GoToLineAbsolute
-    GoToLineRelativeTop
     Home, End
     BufferHome, BufferEnd
     PageUp, PageDown
+
+    SelectLeft, SelectRight, SelectUp, SelectDown
+    SelectHome, SelectEnd
+    SelectBufferHome, SelectBufferEnd
+    SelectPageUp, SelectPageDown
+
+    GoToLineAbsolute
+    GoToLineRelativeTop
     ViewGoToChar        : char
     ViewGoBeforeChar    : char
 }
@@ -232,6 +238,16 @@ impl Chim {
             self.register_move_command(.Normal, "move.buffer_end", [KeyParser.new(.End, .Control)])
             self.register_move_command(.Normal, "move.page_up", [KeyParser.new(.PageUp)])
             self.register_move_command(.Normal, "move.page_down", [KeyParser.new(.PageDown)])
+            self.register_move_command(.Normal, "move.select_left", [KeyParser.new(.Left, .Shift)])
+            self.register_move_command(.Normal, "move.select_right", [KeyParser.new(.Right, .Shift)])
+            self.register_move_command(.Normal, "move.select_up", [KeyParser.new(.Up, .Shift)])
+            self.register_move_command(.Normal, "move.select_down", [KeyParser.new(.Down, .Shift)])
+            self.register_move_command(.Normal, "move.select_line_home", [KeyParser.new(.Home, .Shift)])
+            self.register_move_command(.Normal, "move.select_line_end", [KeyParser.new(.End, .Shift)])
+            self.register_move_command(.Normal, "move.select_buffer_home", [KeyParser.new(.Home, .Control or .Shift)])
+            self.register_move_command(.Normal, "move.select_buffer_end", [KeyParser.new(.End, .Control or .Shift)])
+            self.register_move_command(.Normal, "move.select_page_up", [KeyParser.new(.PageUp, .Shift)])
+            self.register_move_command(.Normal, "move.select_page_down", [KeyParser.new(.PageDown, .Shift)])
             self.register_move_command(.Normal, "move.goto_line_absolute", [KeyParser.new(.Char('g')), KeyParser.new(.Char('l'))])
             self.register_move_command(.Normal, "move.goto_line_relative_top", [KeyParser.new(.Char('g')), KeyParser.new(.Char('t'))])
     
@@ -271,6 +287,16 @@ impl Chim {
             self.register_move_command(.Insert, "move.buffer_end", [KeyParser.new(.End, .Control)])
             self.register_move_command(.Insert, "move.page_up", [KeyParser.new(.PageUp)])
             self.register_move_command(.Insert, "move.page_down", [KeyParser.new(.PageDown)])
+            self.register_move_command(.Insert, "move.select_left", [KeyParser.new(.Left, .Shift)])
+            self.register_move_command(.Insert, "move.select_right", [KeyParser.new(.Right, .Shift)])
+            self.register_move_command(.Insert, "move.select_up", [KeyParser.new(.Up, .Shift)])
+            self.register_move_command(.Insert, "move.select_down", [KeyParser.new(.Down, .Shift)])
+            self.register_move_command(.Insert, "move.select_line_home", [KeyParser.new(.Home, .Shift)])
+            self.register_move_command(.Insert, "move.select_line_end", [KeyParser.new(.End, .Shift)])
+            self.register_move_command(.Insert, "move.select_buffer_home", [KeyParser.new(.Home, .Control or .Shift)])
+            self.register_move_command(.Insert, "move.select_buffer_end", [KeyParser.new(.End, .Control or .Shift)])
+            self.register_move_command(.Insert, "move.select_page_up", [KeyParser.new(.PageUp, .Shift)])
+            self.register_move_command(.Insert, "move.select_page_down", [KeyParser.new(.PageDown, .Shift)])
 
             // editor commands
             self.register_command(.Insert, "editor.tab_next", [KeyParser.new(.Tab, .Control)])
@@ -279,12 +305,16 @@ impl Chim {
             self.register_command(.Insert, "editor.mode_normal", [KeyParser.new(.Char('e'), .Control)])
             self.register_command(.Insert, "editor.mode_normal", [KeyParser.new(.Escape)])
 
-            // view commands
+            // buffer commands
             self.register_command(.Insert, "buffer.delete_left", [KeyParser.new(.Backspace)])
             self.register_command(.Insert, "buffer.delete_right", [KeyParser.new(.Delete)])
             self.register_command(.Insert, "buffer.insert_tab", [KeyParser.new(.Tab)])
             self.register_command(.Insert, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
             self.register_command(.Insert, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
+
+            // view commands
+            self.register_command(.Insert, "view.add_cursor_above", [KeyParser.new(.Up, .Shift or .Alt)])
+            self.register_command(.Insert, "view.add_cursor_below", [KeyParser.new(.Down, .Shift or .Alt)])
         }
     }
 
@@ -402,90 +432,90 @@ impl Chim {
                 }
 
                 .Edit($edit) -> match edit {
-                    .InsertTab -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        if self.use_tab_char {
-                            for 0 .. command.count {
-                                view.get_mut().insert_char('`t')
-                            }
-                        } else {
-                            tab_width := view.get().tab_width.unwrap_or(self.tab_width)
-                            for 0 .. command.count {
-                                spaces := tab_width - (view.get().cursor.column % tab_width)
-                                for 0 .. spaces {
-                                    view.get_mut().insert_char(' ')
-                                }
-                            }
-                        }
-                    }
-                    .IndentLine -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().clamp_or_wrap_cursor_position(false)
-                        buffer := view.get().buffer.get_mut()
-                        cursor := &view.get().cursor
-                        if self.use_tab_char {
-                            for 0 .. command.count {
-                                buffer.insert_char(cursor.line, 0, '`t')
-                                cursor.column += 1
-                            }
-                        } else {
-                            tab_width := view.get().tab_width.unwrap_or(self.tab_width)
+                    // .InsertTab -> {
+                    //     view := self.tabs[self.active_tab].get().get_active_view()
+                    //     if self.use_tab_char {
+                    //         for 0 .. command.count {
+                    //             view.get_mut().insert_char('`t')
+                    //         }
+                    //     } else {
+                    //         tab_width := view.get().tab_width.unwrap_or(self.tab_width)
+                    //         for 0 .. command.count {
+                    //             // spaces := tab_width - (view.get().cursor.column % tab_width)
+                    //             // for 0 .. spaces {
+                    //             //     view.get_mut().insert_char(' ')
+                    //             // }
+                    //         }
+                    //     }
+                    // }
+                    // .IndentLine -> {
+                    //     view := self.tabs[self.active_tab].get().get_active_view()
+                    //     view.get_mut().clamp_or_wrap_cursor_position(false)
+                    //     buffer := view.get().buffer.get_mut()
+                    //     cursor := &view.get().cursor
+                    //     if self.use_tab_char {
+                    //         for 0 .. command.count {
+                    //             buffer.insert_char(cursor.line, 0, '`t')
+                    //             cursor.column += 1
+                    //         }
+                    //     } else {
+                    //         tab_width := view.get().tab_width.unwrap_or(self.tab_width)
 
-                            mut first_non_whitespace := 0
-                            for c in &buffer.lines[cursor.line].characters {
-                                if c != ' ' and c != '`t' {
-                                    first_non_whitespace = it_index
-                                    break
-                                }
-                            }
+                    //         mut first_non_whitespace := 0
+                    //         for c in &buffer.lines[cursor.line].characters {
+                    //             if c != ' ' and c != '`t' {
+                    //                 first_non_whitespace = it_index
+                    //                 break
+                    //             }
+                    //         }
 
-                            for 0 .. command.count {
-                                spaces := tab_width - (first_non_whitespace % tab_width)
-                                for 0 .. spaces {
-                                    buffer.insert_char(cursor.line, 0, ' ')
-                                    cursor.column += 1
-                                    first_non_whitespace += 1
-                                }
-                            }
-                        }
-                    }
-                    .DeindentLine -> {
-                        view := self.tabs[self.active_tab].get().get_active_view()
-                        view.get_mut().clamp_or_wrap_cursor_position(false)
-                        buffer := view.get().buffer.get_mut()
-                        cursor := &view.get().cursor
+                    //         for 0 .. command.count {
+                    //             spaces := tab_width - (first_non_whitespace % tab_width)
+                    //             for 0 .. spaces {
+                    //                 buffer.insert_char(cursor.line, 0, ' ')
+                    //                 cursor.column += 1
+                    //                 first_non_whitespace += 1
+                    //             }
+                    //         }
+                    //     }
+                    // }
+                    // .DeindentLine -> {
+                        // view := self.tabs[self.active_tab].get().get_active_view()
+                        // view.get_mut().clamp_or_wrap_cursor_position(false)
+                        // buffer := view.get().buffer.get_mut()
+                        // cursor := &view.get().cursor
 
-                        mut first_non_whitespace := 0
-                        for c in &buffer.lines[cursor.line].characters {
-                            if c != ' ' and c != '`t' {
-                                first_non_whitespace = it_index
-                                break
-                            }
-                        }
+                        // mut first_non_whitespace := 0
+                        // for c in &buffer.lines[cursor.line].characters {
+                        //     if c != ' ' and c != '`t' {
+                        //         first_non_whitespace = it_index
+                        //         break
+                        //     }
+                        // }
 
-                        if self.use_tab_char {
-                            for 0 .. command.count {
-                                if first_non_whitespace > 0 {
-                                    buffer.erase_char(cursor.line, 0)
-                                    cursor.column -= 1
-                                    first_non_whitespace -= 1
-                                }
-                            }
-                        } else {
-                            tab_width := view.get().tab_width.unwrap_or(self.tab_width)
-                            for 0 .. command.count {
-                                spaces := ((first_non_whitespace + tab_width - 1) % tab_width) + 1
-                                for 0 .. spaces {
-                                    if first_non_whitespace > 0 {
-                                        buffer.erase_char(cursor.line, 0)
-                                        cursor.column -= 1
-                                        first_non_whitespace -= 1
-                                    }
-                                }
-                            }
-                        }
-                        view.get_mut().clamp_or_wrap_cursor_position(false)
-                    }
+                        // if self.use_tab_char {
+                        //     for 0 .. command.count {
+                        //         if first_non_whitespace > 0 {
+                        //             buffer.erase_char(cursor.line, 0)
+                        //             cursor.column -= 1
+                        //             first_non_whitespace -= 1
+                        //         }
+                        //     }
+                        // } else {
+                        //     tab_width := view.get().tab_width.unwrap_or(self.tab_width)
+                        //     for 0 .. command.count {
+                        //         spaces := ((first_non_whitespace + tab_width - 1) % tab_width) + 1
+                        //         for 0 .. spaces {
+                        //             if first_non_whitespace > 0 {
+                        //                 buffer.erase_char(cursor.line, 0)
+                        //                 cursor.column -= 1
+                        //                 first_non_whitespace -= 1
+                        //             }
+                        //         }
+                        //     }
+                        // }
+                        // view.get_mut().clamp_or_wrap_cursor_position(false)
+                    // }
 
                     .Undo -> {
                         view := self.tabs[self.active_tab].get().get_active_view()
@@ -570,6 +600,76 @@ impl Chim {
                         view := self.tabs[self.active_tab].get().get_active_view()
                         for 0 .. command.count {
                             view.get_mut().move_cursor_line(self.get_window_dim().rows / 2)
+                        }
+                    }
+
+                    .SelectLeft -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_column(-1, true)
+                        }
+                    }
+
+                    .SelectRight -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_column(1, true)
+                        }
+                    }
+
+                    .SelectUp -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_line(-1, true)
+                        }
+                    }
+
+                    .SelectDown -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_line(1, true)
+                        }
+                    }
+
+                    .SelectHome -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_column_beginning(true)
+                        }
+                    }
+
+                    .SelectEnd -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_column_end(true)
+                        }
+                    }
+
+                    .SelectBufferHome -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_beginning(true)
+                        }
+                    }
+
+                    .SelectBufferEnd -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_end(true)
+                        }
+                    }
+
+                    .SelectPageUp -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2, true)
+                        }
+                    }
+
+                    .SelectPageDown -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        for 0 .. command.count {
+                            view.get_mut().move_cursor_line(self.get_window_dim().rows / 2, true)
                         }
                     }
 

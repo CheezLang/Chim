@@ -222,6 +222,13 @@ impl Buffer {
         }
     }
 
+    flush_changes :: (&mut Self) {
+        for &change in self.undo_temp[..] {
+            self.undo_stack.push(*change)
+        }
+        self.undo_temp.clear()
+    }
+
     group_changes :: (&mut Self) {
         if self.undo_temp.count() == 1 {
             self.undo_stack.push(self.undo_temp.pop())
@@ -448,6 +455,10 @@ impl Cursor {
         return Cursor(start, end)
     }
 
+    empty :: (&Self) -> bool {
+        return start.line == end.line and start.column == end.column
+    }
+
     low :: (&Self) -> Position {
         return if start <= end then start else end
     }
@@ -478,12 +489,11 @@ impl Cursor {
 }
 
 View :: struct {
-    buffer      : Rc[Buffer]
+    buffer              : Rc[Buffer]
+    cursors             : Array[Cursor]
 
-    top_line    : int = 0
-
-    cursor      := Position()
-    cursors     := Array[Cursor].new()
+    top_line            : int = 0
+    active_cursor       := 0
 
     line_number_mode    := Option[LineNumberMode].None
     wrapping_enabled    := Option[bool].None
@@ -495,31 +505,84 @@ View :: struct {
 
 impl View {
     new :: (buffer: Rc[Buffer]) -> Rc[View] {
-        return Rc[View].new(View(buffer))
+        mut cursors := Array[Cursor].new()
+        cursors.add(Cursor.at(Position()))
+        return Rc[View].new(View(buffer, cursors))
     }
 
     scroll_to_cursor :: (&mut Self, cols: int, rows: int, margin: int) {
-        if self.cursor.line - self.top_line >= rows - margin - 1 {
-            self.top_line = self.cursor.line - rows + margin + 1
-        } else if self.cursor.line - self.top_line < margin {
-            self.top_line = self.cursor.line - margin
+        self.update_cursors()
+
+        cursor := self.get_active_cursor()
+        if cursor.start.line - self.top_line >= rows - margin - 1 {
+            self.top_line = cursor.start.line - rows + margin + 1
+        } else if cursor.start.line - self.top_line < margin {
+            self.top_line = cursor.start.line - margin
         }
         if self.top_line < 0 {
             self.top_line = 0
         }
     }
 
-    add_cursor_below :: (&mut Self) {
-        last_cursor := if cursors.count() == 0 then cursor else cursors.peek_last().start
-        if last_cursor.line < buffer.get().lines.count() + 1 {
-            cursors.add(Cursor.at(Position(last_cursor.line + 1, last_cursor.column)))
+    sort_cursors :: (&mut Self) {
+        self.cursors.sort((a, b) => if a == b then 0 else if a < b then 1 else -1)
+    }
+
+    update_cursors :: (&mut Self) {
+        for &mut c in self.cursors.slice_mut() {
+            c.start = self.clamp_or_wrap_position(c.start, false)
+            c.end = self.clamp_or_wrap_position(c.end, false)
         }
+        self.merge_cursors()
+    }
+
+    clear_cursors :: (&mut Self) {
+        mut cursor := self.get_active_cursor()
+        self.cursors.clear()
+        self.cursors.add(cursor)
+        self.active_cursor = 0
+    }
+
+    merge_cursors :: (&mut Self) {
+        if self.cursors.count() > 1 {
+            self.sort_cursors()
+
+            for {0 .. self.cursors.count() - 1}.reverse() {
+                this := self.cursors[it]
+                next := self.cursors[it + 1]
+                if this.empty() and this.end == next.start {
+                    self.cursors.remove_at(it)
+                } else if next.empty() and this.end == next.start {
+                    self.cursors.remove_at(it + 1)
+                } else if self.cursors[it].end > self.cursors[it + 1].start {
+                    self.cursors[it].end = self.cursors[it + 1].end
+                    self.cursors.remove_at(it + 1)
+                }
+            }
+        }
+        self.active_cursor = self.active_cursor.clamp(0, self.cursors.count() - 1)
+    }
+
+    get_active_cursor :: (&Self) -> Cursor {
+        if self.active_cursor >= self.cursors.count() {
+            io.formatln("{}/{}", [self.active_cursor, self.cursors.count()])
+        }
+        return *self.cursors[self.active_cursor]
+    }
+
+    add_cursor_below :: (&mut Self) {
+        self.update_cursors()
+        last_cursor := self.cursors.peek_last().start
+        if last_cursor.line < buffer.get().lines.count() - 1 {
+            self.cursors.add(Cursor.at(Position(last_cursor.line + 1, last_cursor.column)))
+        }
+        self.active_cursor = self.cursors.count() - 1
     }
 
     undo :: (&mut Self) {
         match self.buffer.get_mut().undo() {
             Some($range) -> {
-                self.cursor = range.end
+                // self.cursor = range.end
             }
             None -> {}
         }
@@ -528,85 +591,263 @@ impl View {
     redo :: (&mut Self) {
         match self.buffer.get_mut().redo() {
             Some($range) -> {
-                self.cursor = range.end
+                // self.cursor = range.end
             }
             None -> {}
         }
     }
 
     insert_char :: (&mut Self, text: char) {
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
-        self.buffer.get_mut().insert_char(cursor.line, cursor.column, text)
-        if text == '`n' {
-            self.cursor.line += 1
-            self.cursor.column = 0
-        } else {
-            self.cursor.column += 1
+        self.buffer.get_mut().flush_changes()
+        self.update_cursors()
+
+        mut last_line := -1
+        mut lines_deleted := 0
+        mut columns_deleted := 0
+        for &mut c in self.cursors.slice_mut() {
+            if c.empty() {
+                c.start.line -= lines_deleted
+                if c.start.line == last_line {
+                    c.start.column -= columns_deleted
+                } else {
+                    columns_deleted = 0
+                }
+
+                self.buffer.get_mut().insert_char(c.start.line, c.start.column, text)
+                if text == '`n' {
+                    c.start.line += 1
+                    c.start.column = 0
+                    lines_deleted -= 1
+                } else {
+                    c.start.column += 1
+                }
+            } else {
+                mut low  := c.low()
+                mut high := c.high()
+
+                low.line -= lines_deleted
+                high.line -= lines_deleted
+                if low.line == high.line {
+                    if low.line == last_line {
+                        low.column -= columns_deleted
+                        high.column -= columns_deleted
+                    } else {
+                        columns_deleted = 0
+                    }
+                } else {
+                    if low.line == last_line {
+                        low.column -= columns_deleted
+                    }
+                    columns_deleted = 0
+                }
+                last_line = low.line
+                lines_deleted += high.line - low.line
+                columns_deleted += high.column - low.column
+
+                self.buffer.get_mut().erase_range(low, high)
+                self.buffer.get_mut().insert_char(low.line, low.column, text)
+
+                c.start = low
+
+                if text == '`n' {
+                    c.start.line += 1
+                    c.start.column = 0
+                    lines_deleted -= 1
+                } else {
+                    c.start.column += 1
+                }
+            }
+
+            c.end = c.start
         }
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
+
+        self.merge_cursors()
+
+        self.buffer.get_mut().group_changes()
     }
 
     delete_line :: (&mut Self) {
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
-        self.buffer.get_mut().erase_line(self.cursor.line)
-        self.cursor.column = 0
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
+        self.buffer.get_mut().flush_changes()
+        self.update_cursors()
+
+        mut last_line       := -1
+        mut lines_deleted   := 0
+        for &mut c in self.cursors.slice_mut() {
+            mut low  := c.low()
+            mut high := c.high()
+
+            low.line -= lines_deleted
+            high.line -= lines_deleted
+
+            if low.line < last_line {
+                if low.line == high.line {
+
+                } else {
+                    for {low.line + 1} ..= high.line {
+                        self.buffer.get_mut().erase_line(low.line)
+                        lines_deleted += 1
+                    }
+                }
+            } else {
+                for low.line ..= high.line {
+                    self.buffer.get_mut().erase_line(low.line)
+                    lines_deleted += 1
+                }
+            }
+
+            last_line = low.line
+            c.start = low
+            c.end   = low
+        }
+        self.update_cursors()
+
+        self.buffer.get_mut().group_changes()
     }
 
     delete_at_cursor :: (&mut Self) {
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
-        if self.cursor.column == 0 {
-            if self.cursor.line > 0 {
-                self.cursor.line -= 1
-                self.cursor.column = self.buffer.get().lines[self.cursor.line].characters.count()
-                self.buffer.get_mut().erase_range(Position(self.cursor.line, self.cursor.column), Position(self.cursor.line + 1, 0))
+        self.buffer.get_mut().flush_changes()
+        self.update_cursors()
+
+        mut last_line := -1
+        mut lines_deleted := 0
+        mut columns_deleted := 0
+        for &mut c in self.cursors.slice_mut() {
+            if c.empty() {
+                c.start.line -= lines_deleted
+                if c.start.line == last_line {
+                    c.start.column -= columns_deleted
+                } else {
+                    columns_deleted = 0
+                }
+
+                if c.start.column == 0 {
+                    if c.start.line > 0 {
+                        c.start.line -= 1
+                        c.start.column = self.buffer.get().lines[c.start.line].characters.count()
+                        self.buffer.get_mut().erase_range(Position(c.start.line, c.start.column), Position(c.start.line + 1, 0))
+                        lines_deleted += 1
+
+                        last_line = c.start.line
+                    } else {
+                        // no point in doing anything
+                    }
+                } else {
+                    c.start.column -= 1
+                    self.buffer.get_mut().erase_char(c.start.line, c.start.column)
+
+                    columns_deleted += 1
+                    last_line = c.start.line
+                }
+
+                c.end = c.start
             } else {
-                // no point in doing anything
+                mut low  := c.low()
+                mut high := c.high()
+
+                low.line -= lines_deleted
+                high.line -= lines_deleted
+                if low.line == high.line {
+                    if low.line == last_line {
+                        low.column -= columns_deleted
+                        high.column -= columns_deleted
+                    } else {
+                        columns_deleted = 0
+                    }
+                } else {
+                    if low.line == last_line {
+                        low.column -= columns_deleted
+                    }
+                    columns_deleted = 0
+                }
+                last_line = low.line
+                lines_deleted += high.line - low.line
+                columns_deleted += high.column - low.column
+
+                self.buffer.get_mut().erase_range(low, high)
+
+                c.start = low
+                c.end   = low
             }
-        } else {
-            self.cursor.column -= 1
-            self.buffer.get_mut().erase_char(self.cursor.line, self.cursor.column)
         }
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
+        self.merge_cursors()
+
+        self.buffer.get_mut().group_changes()
     }
 
-    move_cursor_beginning :: (&mut Self) {
-        self.cursor.line = 0
-        self.cursor.column = 0
+    move_cursor_beginning :: (&mut Self, select: bool = false) {
+        mut cursor := *self.cursors[0]
+        self.cursors.clear()
+        cursor.start.line = 0
+        cursor.start.column = 0
+        if !select {
+            cursor.end = cursor.start
+        }
+        self.cursors.add(cursor)
+        self.active_cursor = 0
     }
 
-    move_cursor_end :: (&mut Self) {
-        self.cursor.line = self.buffer.get().lines.count() - 1
-        self.cursor.column = self.buffer.get().lines[self.cursor.line].characters.count()
+    move_cursor_end :: (&mut Self, select: bool = false) {
+        mut cursor := *self.cursors[0]
+        self.cursors.clear()
+        cursor.start.line = self.buffer.get().lines.count() - 1
+        cursor.start.column = self.buffer.get().lines[cursor.start.line].characters.count()
+        if !select {
+            cursor.end = cursor.start
+        }
+        self.cursors.add(cursor)
+        self.active_cursor = 0
     }
 
-    move_cursor_column_beginning :: (&mut Self) {
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
-        self.cursor.column = 0
+    move_cursor_column_beginning :: (&mut Self, select: bool = false) {
+        for &mut c in self.cursors.slice_mut() {
+            c.start = self.clamp_or_wrap_position(c.start, false)
+            c.end = self.clamp_or_wrap_position(c.end, false)
+            c.start.column = 0
+            if !select {
+                c.end = c.start
+            }
+        }
+        self.update_cursors()
     }
 
-    move_cursor_column_end :: (&mut Self) {
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
-        self.cursor.column = self.buffer.get().lines[self.cursor.line].characters.count()
+    move_cursor_column_end :: (&mut Self, select: bool = false) {
+        for &mut c in self.cursors.slice_mut() {
+            c.start = self.clamp_or_wrap_position(c.start, false)
+            c.end = self.clamp_or_wrap_position(c.end, false)
+            line := self.buffer.get().lines[c.start.line]
+            c.start.column = line.characters.count()
+            if !select {
+                c.end = c.start
+            }
+        }
+        self.update_cursors()
     }
 
-    move_cursor_column :: (&mut Self, columns: int) {
-        self.cursor.column += columns
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=true)
+    move_cursor_column :: (&mut Self, columns: int, select: bool = false) {
+        for &mut c in self.cursors.slice_mut() {
+            c.start = self.clamp_or_wrap_position(Position(c.start.line, c.start.column + columns), true)
+            if !select {
+                c.end = c.start
+            }
+        }
+        self.update_cursors()
     }
 
-    move_cursor_line :: (&mut Self, lines: int) {
-        cursor.line += lines
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
+    move_cursor_line :: (&mut Self, lines: int, select: bool = false) {
+        for &mut c in self.cursors.slice_mut() {
+            c.start = self.clamp_or_wrap_position(Position(c.start.line + lines, c.start.column), false)
+            if !select {
+                c.end = c.start
+            }
+        }
+        self.update_cursors()
     }
 
     set_cursor_line :: (&mut Self, line: int) {
-        cursor.line = line
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap=false)
-    }
-
-    clamp_or_wrap_cursor_position :: (&mut Self, wrap: bool) {
-        self.cursor = self.clamp_or_wrap_position(self.cursor, wrap)
+        self.clear_cursors()
+        self.cursors[0].start.line = line
+        self.cursors[0].end = self.cursors[0].start
+        self.update_cursors()
     }
 
     clamp_or_wrap_position :: (&Self, position: Position, wrap: bool) -> Position {

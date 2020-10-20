@@ -235,6 +235,26 @@ impl Parser for SequenceParser {
                 CommandType.Move(MoveCommand.PageUp)
             } else if name == "page_down" {
                 CommandType.Move(MoveCommand.PageDown)
+            } else if name == "select_left" {
+                CommandType.Move(MoveCommand.SelectLeft)
+            } else if name == "select_right" {
+                CommandType.Move(MoveCommand.SelectRight)
+            } else if name == "select_up" {
+                CommandType.Move(MoveCommand.SelectUp)
+            } else if name == "select_down" {
+                CommandType.Move(MoveCommand.SelectDown)
+            } else if name == "select_line_home" {
+                CommandType.Move(MoveCommand.SelectHome)
+            } else if name == "select_line_end" {
+                CommandType.Move(MoveCommand.SelectEnd)
+            } else if name == "select_buffer_home" {
+                CommandType.Move(MoveCommand.SelectBufferHome)
+            } else if name == "select_buffer_end" {
+                CommandType.Move(MoveCommand.SelectBufferEnd)
+            } else if name == "select_page_up" {
+                CommandType.Move(MoveCommand.SelectPageUp)
+            } else if name == "select_page_down" {
+                CommandType.Move(MoveCommand.SelectPageDown)
             } else if name == "goto_line_absolute" {
                 CommandType.Move(MoveCommand.GoToLineAbsolute)
             } else if name == "goto_line_relative_top" {

@@ -153,6 +153,8 @@ impl Chim {
         tab_width           := view.tab_width.unwrap_or(self.tab_width)
         cursor_margin       := view.cursor_margin.unwrap_or(self.cursor_margin).clamp(0, (bounds_max.row - bounds_min.row) / 2)
 
+        active_cursor := view.get_active_cursor()
+
         count_digits :: (mut n: int) -> int {
             if n == 0 {
                 return 1
@@ -168,18 +170,18 @@ impl Chim {
         line_number_digits := match line_number_mode {
             .None -> 0
             .Absolute -> {
-                cursor_line_no  := view.cursor.line + 1
+                cursor_line_no  := active_cursor.start.line + 1
                 last_line_no := view.top_line + (bounds_max.row - bounds_min.row)
                 1 + max(count_digits(cursor_line_no) + 1, count_digits(last_line_no))
             }
             .RelativeCursor -> {
-                cursor_line_no  := view.cursor.line + 1
-                top_line_no     := view.cursor.line - view.top_line
-                bottom_line_no  := (view.top_line + bounds_max.row - bounds_min.row) - view.cursor.line
+                cursor_line_no  := active_cursor.start.line + 1
+                top_line_no     := active_cursor.start.line - view.top_line
+                bottom_line_no  := (view.top_line + bounds_max.row - bounds_min.row) - active_cursor.start.line
                 1 + max(count_digits(cursor_line_no) + 1, count_digits(max(top_line_no, bottom_line_no)))
             }
             .RelativeTop -> {
-                cursor_line_no  := view.cursor.line + 1
+                cursor_line_no  := active_cursor.start.line + 1
                 last_line_no := (bounds_max.row - bounds_min.row) + 1
                 1 + max(count_digits(cursor_line_no) + 1, count_digits(last_line_no))
             }
@@ -195,7 +197,7 @@ impl Chim {
             view.scroll_to_cursor(bounds.cols, bounds.rows, cursor_margin)
 
             if wrapping_enabled {
-                mut visual := calculate_visual_cursor((view.cursor, view.cursor), &buffer.lines, view.top_line, view.top_line + bounds.rows, bounds, true)
+                mut visual := calculate_visual_cursor((active_cursor.start, active_cursor.start), &buffer.lines, view.top_line, view.top_line + bounds.rows, bounds, true)
                 visual.line -= view.top_line
 
                 for view.top_line .. view.top_line + bounds.rows {
@@ -212,9 +214,9 @@ impl Chim {
         }
 
         mut visual_cursors := Array[(actual: Position, visual: Position, scroll: int)].new()
-        visual_cursors.add((view.cursor, view.cursor, 0))
         for cursor in view.cursors[..] {
             visual_cursors.add((cursor.start, cursor.start, 0))
+            visual_cursors.add((cursor.end, cursor.end, 0))
         }
         for &mut cursor in visual_cursors.slice_mut() {
             cursor.visual.line -= view.top_line
@@ -228,21 +230,21 @@ impl Chim {
                     match line_number_mode {
                         .None -> {}
                         .Absolute -> {
-                            if line_index == view.cursor.line {
+                            if line_index == active_cursor.start.line {
                                 self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
                             } else {
                                 self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits)
                             }
                         }
                         .RelativeCursor -> {
-                            if line_index == view.cursor.line {
+                            if line_index == active_cursor.start.line {
                                 self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
                             } else {
-                                self.render_line_number(bounds_min.col, r, (line_index - view.cursor.line).abs(), line_number_digits)
+                                self.render_line_number(bounds_min.col, r, (line_index - active_cursor.start.line).abs(), line_number_digits)
                             }
                         }
                         .RelativeTop -> {
-                            if line_index == view.cursor.line {
+                            if line_index == active_cursor.start.line {
                                 self.render_line_number(bounds_min.col, r, line_index + 1, line_number_digits, 1)
                             } else {
                                 self.render_line_number(bounds_min.col, r, r - bounds_min.row + 1, line_number_digits)
@@ -252,7 +254,7 @@ impl Chim {
                         _ -> {}
                     }
 
-                    cursor_line := line_index == view.cursor.line
+                    cursor_line := line_index == active_cursor.start.line
 
                     bg := if highlight_curr_line and cursor_line then PaletteIndex.HighlightedBackground else PaletteIndex.Background
                     if highlight_curr_line and cursor_line {
@@ -317,7 +319,7 @@ impl Chim {
                         } else {
                             if cursor_line {
                                 // scroll just this line so that cursor is visible
-                                while view.cursor.column - cursor_scroll >= bounds.cols - 10 {
+                                while active_cursor.start.column - cursor_scroll >= bounds.cols - 10 {
                                     cursor_scroll += 1
                                 }
 
@@ -562,7 +564,7 @@ impl Chim {
 
         tab := self.tabs[self.active_tab].get()
         view := tab.get_active_view()
-        right_side := fmt.format("{}:{} / {}", [view.get().cursor.line + 1, view.get().cursor.column + 1, view.get().buffer.get().lines.count()])
+        right_side := fmt.format("{}:{} / {}", [view.get().get_active_cursor().start.line + 1, view.get().get_active_cursor().start.column + 1, view.get().buffer.get().lines.count()])
         col = cols - right_side.get_length()
         self.render_text_at(col, row, right_side.slice(), .Default, .MenuBackground)
     }
