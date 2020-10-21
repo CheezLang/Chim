@@ -335,9 +335,10 @@ impl Buffer {
                         column = self.lines[line].characters.count()
                     }
 
-                    for c in rem.slice() {
-                        self.lines[line].characters.insert(column + it_index, c, self.allocator.get())
-                    }
+                }
+
+                for c in rem.slice() {
+                    self.lines[line].characters.insert(column + it_index, c, self.allocator.get())
                 }
 
                 BufferEdit.DeleteText((id, pos, Position(line, column)))
