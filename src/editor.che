@@ -1,6 +1,7 @@
 use import std.rc
 use import std.box
 use import std.array
+use import std.map
 use import std.string
 use import std.mem.arena_allocator
 
@@ -89,20 +90,60 @@ impl BufferLine {
 }
 
 BufferEdit :: enum {
-    InsertText  : (pos: Position, text: String)
-    DeleteText  : (start: Position, end: Position)
-    InsertLine  : (line: int, text: String)
-    DeleteLine  : int
+    InsertText  : (id: int, pos: Position, text: String)
+    DeleteText  : (id: int, start: Position, end: Position)
+    InsertLine  : (id: int, line: int, text: String)
+    DeleteLine  : (id: int, line: int)
     Group       : Array[BufferEdit]
 }
 
+BufferEditRanges :: enum {
+    None
+    One     : (start: Position, end: Position)
+    Many    : Map[int, (start: Position, end: Position)]
+}
+
 impl BufferEdit {
+    collect_ranges :: (&Self, map: &mut Map[int, (start: Position, end: Position)]) {
+        match self {
+            .InsertText($edit) -> map.set(edit.id, (edit.pos, edit.pos))
+            .InsertLine($edit) -> map.set(edit.id, (Position(edit.line, 0), Position(edit.line, 0)))
+            .DeleteText($edit) -> map.set(edit.id, (edit.start, edit.end))
+            .DeleteLine($edit) -> map.set(edit.id, (Position(edit.line, 0), Position(edit.line, 0)))
+            .Group($group) -> {
+                for(reverse=true) &change in group[..] {
+                    change.collect_ranges(map)
+                }
+            }
+            _ -> @assert(false)
+        }
+    }
+
+    get_ranges :: (&Self) -> BufferEditRanges {
+        return match self {
+            .InsertText($edit) -> BufferEditRanges.One(edit.pos, edit.pos)
+            .InsertLine($edit) -> BufferEditRanges.One(Position(edit.line, 0), Position(edit.line, 0))
+            .DeleteText($edit) -> BufferEditRanges.One(edit.start, edit.end)
+            .DeleteLine($edit) -> BufferEditRanges.One(Position(edit.line, 0), Position(edit.line, 0))
+            .Group($group) -> {
+                mut map := Map[int, (start: Position, end: Position)].new()
+
+                for(reverse=true) &change in group[..] {
+                    change.collect_ranges(&mut map)
+                }
+
+                BufferEditRanges.Many(map)
+            }
+            _ -> @assert(false)
+        }
+    }
+
     get_range :: (&Self) -> (start: Position, end: Position) {
         return match self {
             .InsertText($edit) -> edit.pos, edit.pos
             .InsertLine($edit) -> Position(edit.line, 0), Position(edit.line, 0)
             .DeleteText($edit) -> edit.start, edit.end
-            .DeleteLine($line) -> Position(*line, 0), Position(*line, 0)
+            .DeleteLine($edit) -> Position(edit.line, 0), Position(edit.line, 0)
             .Group($group) -> {
                 @assert(group.count() > 0)
                 group[0].get_range().start, group.peek_last().get_range().end
@@ -238,9 +279,9 @@ impl Buffer {
         }
     }
 
-    undo :: (&mut Self) -> Option[(start: Position, end: Position)] {
+    undo :: (&mut Self) -> BufferEditRanges {
         if undo_temp.count() == 0 and undo_stack.count() == 0 {
-            return None
+            return .None
         }
 
         edit := if self.undo_temp.count() > 0 {
@@ -250,28 +291,28 @@ impl Buffer {
         }
 
         redo := self.edit(edit)
-        start, end := redo.get_range()
+        ranges := redo.get_ranges()
         self.redo_stack.push(redo)
-        return Some(start, end)
+        return ranges
     }
 
-    redo :: (&mut Self) -> Option[(start: Position, end: Position)] {
+    redo :: (&mut Self) -> BufferEditRanges {
         if redo_stack.count() == 0 {
-            return None
+            return .None
         }
         undo := self.edit(redo_stack.pop())
-        start, end := undo.get_range()
+        ranges := undo.get_ranges()
         if self.undo_temp.count() > 0 {
             self.undo_temp.push(undo)
         } else {
             self.undo_stack.push(undo)
         }
-        return Some(start, end)
+        return ranges
     }
 
     edit :: (&mut Self, edit: BufferEdit) -> BufferEdit {
         return match edit {
-            .InsertText(($pos, $text)) -> {
+            .InsertText(($id, $pos, $text)) -> {
                 // io.formatln("InsertText({}, '{}')", [pos, text.slice()])
                 mut line := pos.line
                 mut column := pos.column
@@ -299,16 +340,16 @@ impl Buffer {
                     }
                 }
 
-                BufferEdit.DeleteText((pos, Position(line, column)))
+                BufferEdit.DeleteText((id, pos, Position(line, column)))
             }
 
-            .InsertLine(($line, $text)) -> {
+            .InsertLine(($id, $line, $text)) -> {
                 // io.formatln("InsertLine({}, '{}')", [line, text.slice()])
                 self.lines.insert(line, BufferLine.from_string(text.slice(), self.allocator.get()), self.allocator.get())
-                BufferEdit.DeleteLine(line)
+                BufferEdit.DeleteLine(id, line)
             }
 
-            .DeleteText(($start, $end)) -> {
+            .DeleteText(($id, $start, $end)) -> {
                 // io.formatln("DeleteText({}, {})", [start, end])
                 deleted_text := self.get_text(start, end)
 
@@ -331,15 +372,15 @@ impl Buffer {
                 }
 
                 // io.formatln("deleted text: '{}'", [deleted_text.slice()])
-                BufferEdit.InsertText((start, deleted_text))
+                BufferEdit.InsertText((id, start, deleted_text))
             }
 
-            .DeleteLine($line) -> {
+            .DeleteLine(($id, $line)) -> {
                 // io.formatln("DeleteLine({})", [line])
                 deleted_text := self.lines[line].get_text()
                 lines.erase(line)
                 // io.formatln("deleted text: '{}'", [deleted_text.slice()])
-                BufferEdit.InsertLine((line, deleted_text))
+                BufferEdit.InsertLine((id, line, deleted_text))
             }
 
             .Group($group) -> {
@@ -352,34 +393,34 @@ impl Buffer {
 
             $op -> {
                 io.formatln("undo(): {} not implemented", [&op])
-                BufferEdit.InsertLine((0, String.empty()))
+                BufferEdit.InsertLine((0, 0, String.empty()))
             }
         }
     }
 
-    insert_line :: (&mut Self, line: int, text: string) {
+    insert_line :: (&mut Self, line: int, text: string, id: int) {
         self.lines.insert(line, BufferLine.from_string(text, self.allocator.get()), self.allocator.get())
 
-        self.undo_temp.push(.DeleteLine(line))
+        self.undo_temp.push(.DeleteLine(id, line))
         self.redo_stack.clear()
         self.dirty = true
     }
 
-    append_string :: (&mut Self, line: int, text: string) {
+    append_string :: (&mut Self, line: int, text: string, id: int) {
         if line < 0 or line >= self.lines.count() {
             io.formatln("[ERROR] trying to insert at {} into buffer with {} lines", [line, self.lines.count()])
             return
         }
-        self.insert_string(line, self.lines[line].characters.count(), text)
+        self.insert_string(line, self.lines[line].characters.count(), text, id)
     }
 
-    insert_string :: (&mut Self, line: int, column: int, text: string) -> (start: Position, end: Position) {
+    insert_string :: (&mut Self, line: int, column: int, text: string, id: int) -> (start: Position, end: Position) {
         if line < 0 or line >= self.lines.count() {
             io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
             return (Position(line, column), Position(line, column))
         }
 
-        undo := self.edit(BufferEdit.InsertText(Position(line, column), text.to_owned()))
+        undo := self.edit(BufferEdit.InsertText(id, Position(line, column), text.to_owned()))
         range := undo.get_range()
         self.undo_temp.push(undo)
         self.redo_stack.clear()
@@ -387,18 +428,18 @@ impl Buffer {
         return range
     }
 
-    insert_char :: (&mut Self, line: int, column: int, ch: char) {
+    insert_char :: (&mut Self, line: int, column: int, ch: char, id: int) {
         if line < 0 or line >= self.lines.count() {
             io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
             return
         }
 
-        self.undo_temp.push(self.edit(BufferEdit.InsertText(Position(line, column), String.from_char(ch))))
+        self.undo_temp.push(self.edit(BufferEdit.InsertText(id, Position(line, column), String.from_char(ch))))
         self.redo_stack.clear()
         self.dirty = true
     }
 
-    erase_line :: (&mut Self, line: int) {
+    erase_line :: (&mut Self, line: int, id: int) {
         if line < 0 or line >= self.lines.count() {
             io.formatln("[ERROR] trying to erase line {} in buffer with {} lines", [line, self.lines.count()])
             return
@@ -410,18 +451,18 @@ impl Buffer {
             self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
         }
 
-        self.undo_temp.push(.InsertLine(line, text))
+        self.undo_temp.push(.InsertLine(id, line, text))
         self.redo_stack.clear()
         self.dirty = true
     }
 
-    erase_range :: (&mut Self, start: Position, end: Position) {
-        self.undo_temp.push(self.edit(BufferEdit.DeleteText(start, end)))
+    erase_range :: (&mut Self, start: Position, end: Position, id: int) {
+        self.undo_temp.push(self.edit(BufferEdit.DeleteText(id, start, end)))
         self.redo_stack.clear()
         self.dirty = true
     }
 
-    erase_char :: (&mut Self, line: int, column: int) {
+    erase_char :: (&mut Self, line: int, column: int, id: int) {
         if line < 0 or line >= self.lines.count() {
             io.formatln("[ERROR] trying to erase char at {}:{} in buffer with {} lines", [line, column, self.lines.count()])
             return
@@ -430,7 +471,7 @@ impl Buffer {
         buffer_line := self.lines[line]
         text := String.from_char(buffer_line.characters.erase(column))
 
-        self.undo_temp.push(.InsertText(Position(line, column), text))
+        self.undo_temp.push(.InsertText(id, Position(line, column), text))
         self.redo_stack.clear()
         self.dirty = true
     }
@@ -583,19 +624,39 @@ impl View {
 
     undo :: (&mut Self) {
         match self.buffer.get_mut().undo() {
-            Some($range) -> {
-                // self.cursor = range.end
+            .None -> {}
+            .One($range) -> {
+                self.clear_cursors()
+                self.cursors[0].start = range.start
+                self.cursors[0].end = range.end
             }
-            None -> {}
+            .Many($ranges) -> {
+                self.cursors.clear()
+                for range in &ranges {
+                    self.cursors.add(Cursor(range.value.start, range.value.end))
+                }
+                self.active_cursor = 0
+                self.update_cursors()
+            }
         }
     }
 
     redo :: (&mut Self) {
         match self.buffer.get_mut().redo() {
-            Some($range) -> {
-                // self.cursor = range.end
+            .None -> {}
+            .One($range) -> {
+                self.clear_cursors()
+                self.cursors[0].start = range.end
+                self.cursors[0].end = range.end
             }
-            None -> {}
+            .Many($ranges) -> {
+                self.cursors.clear()
+                for range in &ranges {
+                    self.cursors.add(Cursor(range.value.start, range.value.end))
+                }
+                self.active_cursor = 0
+                self.update_cursors()
+            }
         }
     }
 
@@ -642,7 +703,7 @@ impl View {
                 } else {
                     columns_deleted = 0
                 }
-                range := self.buffer.get_mut().insert_string(c.start.line, c.start.column, text)
+                range := self.buffer.get_mut().insert_string(c.start.line, c.start.column, text, it_index)
 
                 c.start = range.end
                 lines_added += range.end.line - range.start.line
@@ -669,8 +730,8 @@ impl View {
                 lines_added -= high.line - low.line
                 columns_deleted += high.column - low.column
 
-                self.buffer.get_mut().erase_range(low, high)
-                range := self.buffer.get_mut().insert_string(low.line, low.column, text)
+                self.buffer.get_mut().erase_range(low, high, it_index)
+                range := self.buffer.get_mut().insert_string(low.line, low.column, text, it_index)
 
                 c.start = range.end
                 lines_added += range.end.line - range.start.line
@@ -700,7 +761,7 @@ impl View {
                     columns_deleted = 0
                 }
 
-                self.buffer.get_mut().insert_char(c.start.line, c.start.column, text)
+                self.buffer.get_mut().insert_char(c.start.line, c.start.column, text, it_index)
                 if text == '`n' {
                     c.start.line += 1
                     c.start.column = 0
@@ -731,8 +792,8 @@ impl View {
                 lines_deleted += high.line - low.line
                 columns_deleted += high.column - low.column
 
-                self.buffer.get_mut().erase_range(low, high)
-                self.buffer.get_mut().insert_char(low.line, low.column, text)
+                self.buffer.get_mut().erase_range(low, high, it_index)
+                self.buffer.get_mut().insert_char(low.line, low.column, text, it_index)
 
                 c.start = low
 
@@ -771,13 +832,13 @@ impl View {
 
                 } else {
                     for {low.line + 1} ..= high.line {
-                        self.buffer.get_mut().erase_line(low.line)
+                        self.buffer.get_mut().erase_line(low.line, it_index)
                         lines_deleted += 1
                     }
                 }
             } else {
                 for low.line ..= high.line {
-                    self.buffer.get_mut().erase_line(low.line)
+                    self.buffer.get_mut().erase_line(low.line, it_index)
                     lines_deleted += 1
                 }
             }
@@ -811,7 +872,7 @@ impl View {
                     if c.start.line > 0 {
                         c.start.line -= 1
                         c.start.column = self.buffer.get().lines[c.start.line].characters.count()
-                        self.buffer.get_mut().erase_range(Position(c.start.line, c.start.column), Position(c.start.line + 1, 0))
+                        self.buffer.get_mut().erase_range(Position(c.start.line, c.start.column), Position(c.start.line + 1, 0), it_index)
                         lines_deleted += 1
 
                         last_line = c.start.line
@@ -820,7 +881,7 @@ impl View {
                     }
                 } else {
                     c.start.column -= 1
-                    self.buffer.get_mut().erase_char(c.start.line, c.start.column)
+                    self.buffer.get_mut().erase_char(c.start.line, c.start.column, it_index)
 
                     columns_deleted += 1
                     last_line = c.start.line
@@ -850,7 +911,7 @@ impl View {
                 lines_deleted += high.line - low.line
                 columns_deleted += high.column - low.column
 
-                self.buffer.get_mut().erase_range(low, high)
+                self.buffer.get_mut().erase_range(low, high, it_index)
 
                 c.start = low
                 c.end   = low
