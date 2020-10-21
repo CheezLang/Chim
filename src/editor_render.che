@@ -327,6 +327,17 @@ impl Chim {
                             for bounds_min.col + line_number_digits + col .. bounds_max.col {
                                 *self.slots[it + r * SLOTS_X] = Slot('`0', .Default, bg)
                             }
+
+                            // handle selection of newline
+                            new_line_pos := Position(line_index, line.characters.count())
+                            for &c in view.cursors[..] {
+                                if new_line_pos >= c.low() and new_line_pos < c.high() {
+                                    actual_col := bounds_min.col + line_number_digits + col
+                                    *self.slots[actual_col + r * SLOTS_X] = Slot('`0', .Default, .Selection, col)
+                                    col += 1
+                                    break
+                                }
+                            }
                         } else {
                             if cursor_line {
                                 // scroll just this line so that cursor is visible
@@ -351,7 +362,7 @@ impl Chim {
 
                                 for offset_left .. (bounds.cols - offset_right) {
                                     pos := Position(line_index, it + cursor_scroll)
-        
+
                                     // selection
                                     mut selected := false
                                     for &c in view.cursors[..] {
@@ -374,6 +385,18 @@ impl Chim {
                                 for 0 .. offset_right {
                                     col := bounds_max.col - offset_right + it_index
                                     *self.slots[col + r * SLOTS_X] = Slot('.', .Comment, bg)
+                                }
+
+                                // handle selection of newline
+                                if offset_right == 0 {
+                                    new_line_pos := Position(line_index, line.characters.count())
+                                    for &c in view.cursors[..] {
+                                        if new_line_pos >= c.low() and new_line_pos < c.high() {
+                                            col := bounds_min.col + line_number_digits + line.characters.count() - cursor_scroll
+                                            *self.slots[col + r * SLOTS_X] = Slot('`0', .Default, .Selection)
+                                            break
+                                        }
+                                    }
                                 }
                             } else {
                                 for 0 .. (bounds_max.col - bounds_min.col - 3) {
@@ -444,6 +467,17 @@ impl Chim {
                                     *self.slots[actual_col + r * SLOTS_X] = Slot(c, .Default, bg, col)
                                     col += 1
                                 }
+                            }
+                        }
+
+                        // handle selection of newline
+                        new_line_pos := Position(line_index, line.characters.count())
+                        for &c in view.cursors[..] {
+                            if new_line_pos >= c.low() and new_line_pos < c.high() {
+                                actual_col := bounds_min.col + line_number_digits + col
+                                *self.slots[actual_col + r * SLOTS_X] = Slot('`0', .Default, .Selection, col)
+                                col += 1
+                                break
                             }
                         }
                     }
