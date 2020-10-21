@@ -373,16 +373,18 @@ impl Buffer {
         self.insert_string(line, self.lines[line].characters.count(), text)
     }
 
-    insert_string :: (&mut Self, line: int, column: int, text: string) {
+    insert_string :: (&mut Self, line: int, column: int, text: string) -> (start: Position, end: Position) {
         if line < 0 or line >= self.lines.count() {
             io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
-            return
+            return (Position(line, column), Position(line, column))
         }
 
         undo := self.edit(BufferEdit.InsertText(Position(line, column), text.to_owned()))
+        range := undo.get_range()
         self.undo_temp.push(undo)
         self.redo_stack.clear()
         self.dirty = true
+        return range
     }
 
     insert_char :: (&mut Self, line: int, column: int, ch: char) {
@@ -595,6 +597,91 @@ impl View {
             }
             None -> {}
         }
+    }
+
+    get_selected_text :: (&Self) -> String {
+        mut result := String.empty()
+
+        for &c in self.cursors[..] {
+            if it_index > 0 then result.append_char('`n')
+            text := self.buffer.get().get_text(c.low(), c.high())
+            result.append(&text)
+        }
+
+        return result
+    }
+
+    insert_string :: (&mut Self, text: string) {
+        self.buffer.get_mut().flush_changes()
+        self.update_cursors()
+
+        mut lines := text.lines().collect()
+
+        lines_per_cursor := if lines.count() % self.cursors.count() == 0 {
+            lines.count() / self.cursors.count()
+        } else {
+            lines.count()
+        }
+
+        mut last_line := -1
+        mut lines_added := 0
+        mut columns_deleted := 0
+        for &mut c in self.cursors.slice_mut() {
+            text := if lines_per_cursor == lines.count() then text else {
+                first_line_index := it_index * lines_per_cursor
+                last_line_index  := (it_index + 1) * lines_per_cursor - 1
+                begin := int(lines[first_line_index].bytes.data) - int(text.bytes.data)
+                end   := int(lines[last_line_index].bytes.data) - int(text.bytes.data) + lines[last_line_index].bytes.length
+                text[begin .. end]
+            }
+
+            if c.empty() {
+                c.start.line += lines_added
+                if c.start.line == last_line {
+                    c.start.column -= columns_deleted
+                } else {
+                    columns_deleted = 0
+                }
+                range := self.buffer.get_mut().insert_string(c.start.line, c.start.column, text)
+
+                c.start = range.end
+                lines_added += range.end.line - range.start.line
+            } else {
+                mut low  := c.low()
+                mut high := c.high()
+
+                low.line += lines_added
+                high.line += lines_added
+                if low.line == high.line {
+                    if low.line == last_line {
+                        low.column -= columns_deleted
+                        high.column -= columns_deleted
+                    } else {
+                        columns_deleted = 0
+                    }
+                } else {
+                    if low.line == last_line {
+                        low.column -= columns_deleted
+                    }
+                    columns_deleted = 0
+                }
+                last_line = low.line
+                lines_added -= high.line - low.line
+                columns_deleted += high.column - low.column
+
+                self.buffer.get_mut().erase_range(low, high)
+                range := self.buffer.get_mut().insert_string(low.line, low.column, text)
+
+                c.start = range.end
+                lines_added += range.end.line - range.start.line
+            }
+
+            c.end = c.start
+        }
+
+        self.merge_cursors()
+
+        self.buffer.get_mut().group_changes()
     }
 
     insert_char :: (&mut Self, text: char) {

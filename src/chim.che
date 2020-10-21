@@ -22,6 +22,7 @@ use import editor
 use import gap_buffer
 use import editor_input
 use import editor_render
+use import clipboard
 
 vec2 :: imgui.ImVec2
 vec4 :: imgui.ImVec4
@@ -62,6 +63,7 @@ EditCommand :: enum {
     InsertTab
     IndentLine, DeindentLine
     Undo, Redo
+    Copy, Paste
 }
 
 ViewCommand :: enum {
@@ -269,6 +271,8 @@ impl Chim {
             self.register_command(.Normal, "buffer.deindent_line", [KeyParser.new(.Tab, .Shift)])
             self.register_command(.Normal, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
             self.register_command(.Normal, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
+            self.register_command(.Normal, "buffer.copy", [KeyParser.new(.Char('c'), .Control)])
+            self.register_command(.Normal, "buffer.paste", [KeyParser.new(.Char('v'), .Control)])
 
             // view commands
             self.register_command(.Normal, "view.add_cursor_above", [KeyParser.new(.Up, .Shift or .Alt)])
@@ -311,6 +315,8 @@ impl Chim {
             self.register_command(.Insert, "buffer.insert_tab", [KeyParser.new(.Tab)])
             self.register_command(.Insert, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
             self.register_command(.Insert, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
+            self.register_command(.Insert, "buffer.copy", [KeyParser.new(.Char('c'), .Control)])
+            self.register_command(.Insert, "buffer.paste", [KeyParser.new(.Char('v'), .Control)])
 
             // view commands
             self.register_command(.Insert, "view.add_cursor_above", [KeyParser.new(.Up, .Shift or .Alt)])
@@ -525,6 +531,29 @@ impl Chim {
                     .Redo -> {
                         view := self.tabs[self.active_tab].get().get_active_view()
                         view.get_mut().redo()
+                    }
+
+                    .Copy -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        text := view.get().get_selected_text()
+                        match Clipboard.set_string(text.slice()) {
+                            Ok() -> {}
+                            Err() -> {
+                                io.formatln("[ERROR] Failed to copy to clipboard")
+                            }
+                        }
+                    }
+
+                    .Paste -> {
+                        view := self.tabs[self.active_tab].get().get_active_view()
+                        match Clipboard.get_string() {
+                            Ok($str) -> {
+                                view.get_mut().insert_string(str.slice())
+                            }
+                            Err($err) -> {
+                                io.formatln("[ERROR] Failed to paste from clipboard: {}", [err.slice()])
+                            }
+                        }
                     }
 
                     $cmd -> {

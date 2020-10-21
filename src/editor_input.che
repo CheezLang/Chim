@@ -303,6 +303,10 @@ impl Parser for SequenceParser {
                 CommandType.Edit(EditCommand.Undo)
             } else if name == "redo" {
                 CommandType.Edit(EditCommand.Redo)
+            } else if name == "copy" {
+                CommandType.Edit(EditCommand.Copy)
+            } else if name == "paste" {
+                CommandType.Edit(EditCommand.Paste)
             } else {
                 return Err(fmt.format("Unknown view command: '{}'", [command]))
             }

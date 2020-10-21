@@ -1,0 +1,107 @@
+use import std.os.windows_types
+use import std.string
+
+C   :: import std.c
+io  :: import std.io
+fmt :: import std.fmt
+
+#export_scope
+
+HGLOBAL :: HANDLE
+
+GHND            :: 0x0042
+GMEM_FIXED      :: 0x0000
+GMEM_MOVEABLE   :: 0x0002
+GMEM_ZEROINIT   :: 0x0040
+GPTR            :: 0x0040
+
+CF_BITMAP           :: 2
+CF_DIB              :: 8
+CF_DIBV5            :: 17
+CF_DIF              :: 5
+CF_DSPBITMAP        :: 0x0082
+CF_DSPENHMETAFILE   :: 0x008E
+CF_DSPMETAFILEPICT  :: 0x0083
+CF_DSPTEXT          :: 0x0081
+CF_ENHMETAFILE      :: 14
+CF_GDIOBJFIRST      :: 0x0300
+CF_GDIOBJLAST       :: 0x03FF
+CF_HDROP            :: 15
+CF_LOCALE           :: 16
+CF_METAFILEPICT     :: 3
+CF_OEMTEXT          :: 7
+CF_OWNERDISPLAY     :: 0x0080
+CF_PALETTE          :: 9
+CF_PENDATA          :: 10
+CF_PRIVATEFIRST     :: 0x0200
+CF_PRIVATELAST      :: 0x02FF
+CF_RIFF             :: 11
+CF_SYLK             :: 4
+CF_TEXT             :: 1
+CF_TIFF             :: 6
+CF_UNICODETEXT      :: 13
+CF_WAVE             :: 12
+
+SetClipboardData    :: (format: UINT, mem: HANDLE) -> HANDLE #stdcall;
+GetClipboardData    :: (format: UINT) -> HANDLE #stdcall;
+EmptyClipboard      :: () -> BOOL #stdcall;
+OpenClipboard       :: (new_owned: HWND) -> BOOL #stdcall;
+CloseClipboard      :: () -> BOOL #stdcall;
+GlobalAlloc         :: (uFlags: UINT, dwBytes: SIZE_T) -> HGLOBAL #stdcall;
+GlobalLock          :: (hMem: HGLOBAL) -> ^mut void #stdcall;
+GlobalUnlock        :: (hMem: HGLOBAL) -> BOOL #stdcall;
+
+Clipboard :: struct {
+
+}
+
+impl Clipboard {
+    set_string :: (text: string) -> Result[(), ()] {
+        if OpenClipboard(null) == 0 {
+            return Err()
+        }
+        defer CloseClipboard()
+
+        if EmptyClipboard() == 0 {
+            return Err()
+        }
+
+        handle := GlobalAlloc(GMEM_MOVEABLE, cast text.bytes.length + 1)
+        if handle == null {
+            return Err()
+        }
+
+        mem := cast(^mut u8) GlobalLock(handle)
+        C.memcpy(mem, text.bytes.data, cast text.bytes.length)
+        mem[text.bytes.length] = 0
+        GlobalUnlock(handle)
+
+        SetClipboardData(CF_TEXT, handle)
+        return Ok()
+    }
+
+    get_string :: () -> Result[String, String] {
+        if OpenClipboard(null) == 0 {
+            return Err(fmt.format("Failed to open clipboard"))
+        }
+        defer CloseClipboard()
+
+        handle := GetClipboardData(CF_UNICODETEXT)
+        if handle == null {
+            return Err(fmt.format("Failed to get clipboard data"))
+        }
+
+        mem := cast(^u16) GlobalLock(handle)
+        defer GlobalUnlock(handle)
+
+        mut length := 0
+        for {0..} {
+            if mem[it] == 0 {
+                length = it
+                break
+            }
+        }
+        result := try_with(String.from_utf16(Slice.from_ptr_and_length(mem, length)), { return Err(fmt.format("Failed to decode UTF-16 string")) })
+        return Ok(result)
+    }
+}
