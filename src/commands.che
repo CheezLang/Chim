@@ -1,0 +1,558 @@
+use import std.rc
+use import std.string
+use import std.array
+
+io  :: import std.io
+fmt :: import std.fmt
+
+use import glfw
+use import glfw_hl
+
+use import chim
+use import editor
+use import gap_buffer
+use import editor_input
+use import editor_render
+use import clipboard
+
+#export_scope
+
+MoveCommand :: enum #copy {
+    Left, Right, Up, Down
+    Home, End
+    BufferHome, BufferEnd
+    PageUp, PageDown
+
+    SelectLeft, SelectRight, SelectUp, SelectDown
+    SelectHome, SelectEnd
+    SelectBufferHome, SelectBufferEnd
+    SelectPageUp, SelectPageDown
+
+    GoToLineAbsolute
+    GoToLineRelativeTop
+    GoToChar            : char
+    GoBeforeChar        : char
+    GoToCharBack        : char
+    GoBeforeCharBack    : char
+}
+
+EditCommand :: enum #copy {
+    InsertTab
+    IndentLine, DeindentLine
+    Undo, Redo
+    Copy, Paste
+}
+
+ViewCommand :: enum #copy {
+    AddCursorAbove, AddCursorBelow
+}
+
+CommandType :: enum {
+    Move            : MoveCommand
+    Edit            : EditCommand
+    View            : ViewCommand
+    SwitchMode      : Mode
+    ChangeFontSize  : f32
+    ChangeFont      : String
+    TabNext, TabPrev
+    DeleteLeft, DeleteRight
+    DeleteLine
+    BufferSave
+    RepeatLastMove
+    RepeatLastMoveInv
+}
+
+Command :: struct {
+    count   : int
+    typ     : CommandType
+}
+
+impl Chim {
+    execute_command :: (&mut Self, count: int, command: &CommandType) {
+        count := if count == 0 then 1 else count
+        match command {
+            .SwitchMode($mode) -> {
+                self.current_mode = *mode
+            }
+
+            .BufferSave -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                try_with(view.get().buffer.get().write_to_disk(), {
+                    io.formatln("[ERROR] {}", [&err])
+                })
+            }
+
+            .TabNext -> {
+                for 0 .. count {
+                    self.active_tab = (self.active_tab + 1) % self.tabs.count()
+                }
+            }
+
+            .TabPrev -> {
+                for 0 .. count {
+                    self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
+                }
+            }
+
+            .DeleteLine -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().delete_line()
+                }
+            }
+
+            .DeleteLeft -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().delete_at_cursor()
+                }
+            }
+
+            .DeleteRight -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column(1)
+                    view.get_mut().delete_at_cursor()
+                }
+            }
+
+            .View($view) -> match view {
+                // .AddCursorAbove -> {
+                //     view := self.tabs[self.active_tab].get().get_active_view()
+                //     view.get_mut().add_cursor_below()
+                // }
+
+                .AddCursorBelow -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().add_cursor_below()
+                }
+
+                $cmd -> {
+                    io.formatln("[ERROR] view command not implemented: {}", [&cmd])
+                }
+            }
+
+            .Edit($edit) -> match edit {
+                // .InsertTab -> {
+                //     view := self.tabs[self.active_tab].get().get_active_view()
+                //     if self.use_tab_char {
+                //         for 0 .. count {
+                //             view.get_mut().insert_char('`t')
+                //         }
+                //     } else {
+                //         tab_width := view.get().tab_width.unwrap_or(self.tab_width)
+                //         for 0 .. count {
+                //             // spaces := tab_width - (view.get().cursor.column % tab_width)
+                //             // for 0 .. spaces {
+                //             //     view.get_mut().insert_char(' ')
+                //             // }
+                //         }
+                //     }
+                // }
+                // .IndentLine -> {
+                //     view := self.tabs[self.active_tab].get().get_active_view()
+                //     view.get_mut().clamp_or_wrap_cursor_position(false)
+                //     buffer := view.get().buffer.get_mut()
+                //     cursor := &view.get().cursor
+                //     if self.use_tab_char {
+                //         for 0 .. count {
+                //             buffer.insert_char(cursor.line, 0, '`t')
+                //             cursor.column += 1
+                //         }
+                //     } else {
+                //         tab_width := view.get().tab_width.unwrap_or(self.tab_width)
+
+                //         mut first_non_whitespace := 0
+                //         for c in &buffer.lines[cursor.line].characters {
+                //             if c != ' ' and c != '`t' {
+                //                 first_non_whitespace = it_index
+                //                 break
+                //             }
+                //         }
+
+                //         for 0 .. count {
+                //             spaces := tab_width - (first_non_whitespace % tab_width)
+                //             for 0 .. spaces {
+                //                 buffer.insert_char(cursor.line, 0, ' ')
+                //                 cursor.column += 1
+                //                 first_non_whitespace += 1
+                //             }
+                //         }
+                //     }
+                // }
+                // .DeindentLine -> {
+                    // view := self.tabs[self.active_tab].get().get_active_view()
+                    // view.get_mut().clamp_or_wrap_cursor_position(false)
+                    // buffer := view.get().buffer.get_mut()
+                    // cursor := &view.get().cursor
+
+                    // mut first_non_whitespace := 0
+                    // for c in &buffer.lines[cursor.line].characters {
+                    //     if c != ' ' and c != '`t' {
+                    //         first_non_whitespace = it_index
+                    //         break
+                    //     }
+                    // }
+
+                    // if self.use_tab_char {
+                    //     for 0 .. count {
+                    //         if first_non_whitespace > 0 {
+                    //             buffer.erase_char(cursor.line, 0)
+                    //             cursor.column -= 1
+                    //             first_non_whitespace -= 1
+                    //         }
+                    //     }
+                    // } else {
+                    //     tab_width := view.get().tab_width.unwrap_or(self.tab_width)
+                    //     for 0 .. count {
+                    //         spaces := ((first_non_whitespace + tab_width - 1) % tab_width) + 1
+                    //         for 0 .. spaces {
+                    //             if first_non_whitespace > 0 {
+                    //                 buffer.erase_char(cursor.line, 0)
+                    //                 cursor.column -= 1
+                    //                 first_non_whitespace -= 1
+                    //             }
+                    //         }
+                    //     }
+                    // }
+                    // view.get_mut().clamp_or_wrap_cursor_position(false)
+                // }
+
+                .Undo -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().undo()
+                }
+
+                .Redo -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view.get_mut().redo()
+                }
+
+                .Copy -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    text := view.get().get_selected_text()
+                    match Clipboard.set_string(text.slice()) {
+                        Ok() -> {}
+                        Err() -> {
+                            io.formatln("[ERROR] Failed to copy to clipboard")
+                        }
+                    }
+                }
+
+                .Paste -> {
+                    view := self.tabs[self.active_tab].get().get_active_view()
+                    match Clipboard.get_string() {
+                        Ok($str) -> {
+                            view.get_mut().insert_string(str.slice())
+                        }
+                        Err($err) -> {
+                            io.formatln("[ERROR] Failed to paste from clipboard: {}", [err.slice()])
+                        }
+                    }
+                }
+
+                $cmd -> {
+                    io.formatln("[ERROR] edit command not implemented: {}", [&cmd])
+                }
+            }
+
+            .RepeatLastMove -> match &self.last_move_command {
+                Some($mov) -> self.execute_move_command(count * mov.count, mov.command)
+                None -> {}
+            }
+
+            .RepeatLastMoveInv -> match &self.last_move_command {
+                Some($mov) -> self.execute_move_command(count * mov.count, mov.command.invert())
+                None -> {}
+            }
+
+            .Move($move) -> {
+                self.last_move_command = Some(count, *move)
+                self.execute_move_command(count, *move)
+            }
+
+            $cmd -> {
+                io.formatln("[ERROR] command not implemented: {}", [&cmd])
+            }
+        }
+    }
+
+    execute_move_command :: (&mut Self, count: int, command: MoveCommand) {
+        match command {
+            .Left -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column(-1)
+                }
+            }
+
+            .Right -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column(1)
+                }
+            }
+
+            .Up -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(-1)
+                }
+            }
+
+            .Down -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(1)
+                }
+            }
+
+            .Home -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column_beginning()
+                }
+            }
+
+            .End -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column_end()
+                }
+            }
+
+            .BufferHome -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_beginning()
+                }
+            }
+
+            .BufferEnd -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_end()
+                }
+            }
+
+            .PageUp -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2)
+                }
+            }
+
+            .PageDown -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(self.get_window_dim().rows / 2)
+                }
+            }
+
+            .SelectLeft -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column(-1, true)
+                }
+            }
+
+            .SelectRight -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column(1, true)
+                }
+            }
+
+            .SelectUp -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(-1, true)
+                }
+            }
+
+            .SelectDown -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(1, true)
+                }
+            }
+
+            .SelectHome -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column_beginning(true)
+                }
+            }
+
+            .SelectEnd -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_column_end(true)
+                }
+            }
+
+            .SelectBufferHome -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_beginning(true)
+                }
+            }
+
+            .SelectBufferEnd -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_end(true)
+                }
+            }
+
+            .SelectPageUp -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2, true)
+                }
+            }
+
+            .SelectPageDown -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                for 0 .. count {
+                    view.get_mut().move_cursor_line(self.get_window_dim().rows / 2, true)
+                }
+            }
+
+            .GoToLineAbsolute -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                view.get_mut().set_cursor_line(count - 1)
+            }
+
+            .GoToLineRelativeTop -> {
+                view := self.tabs[self.active_tab].get().get_active_view()
+                view.get_mut().set_cursor_line(view.get().top_line + count - 1)
+            }
+
+            .GoToChar($ch) -> {
+                view_rc := self.tabs[self.active_tab].get().get_active_view()
+                view := view_rc.get_mut()
+
+                view.update_cursors()
+                for &mut cursor in view.cursors.slice_mut() {
+                    line := view.buffer.get().lines[cursor.start.line]
+                    move_end := cursor.empty()
+                    if cursor.start.column >= line.characters.count() then continue
+                    for {cursor.start.column + 1} .. line.characters.count() {
+                        if *line.characters[it] == ch {
+                            cursor.start.column = it
+                            if move_end {
+                                cursor.end = cursor.start
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+
+            .GoToCharBack($ch) -> {
+                view_rc := self.tabs[self.active_tab].get().get_active_view()
+                view := view_rc.get_mut()
+
+                view.update_cursors()
+                for &mut cursor in view.cursors.slice_mut() {
+                    line := view.buffer.get().lines[cursor.start.line]
+                    move_end := cursor.empty()
+                    if cursor.start.column <= 0 then continue
+                    for {cursor.start.column - 1} ..= 0 {
+                        if *line.characters[it] == ch {
+                            cursor.start.column = it
+                            if move_end {
+                                cursor.end = cursor.start
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+
+            .GoBeforeChar($ch) -> {
+                view_rc := self.tabs[self.active_tab].get().get_active_view()
+                view := view_rc.get_mut()
+
+                view.update_cursors()
+                for &mut cursor in view.cursors.slice_mut() {
+                    line := view.buffer.get().lines[cursor.start.line]
+                    move_end := cursor.empty()
+                    if cursor.start.column >= line.characters.count() then continue
+                    for {cursor.start.column + 1} .. line.characters.count() {
+                        if *line.characters[it] == ch {
+                            cursor.start.column = it - 1
+                            if move_end {
+                                cursor.end = cursor.start
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+
+            .GoBeforeCharBack($ch) -> {
+                view_rc := self.tabs[self.active_tab].get().get_active_view()
+                view := view_rc.get_mut()
+
+                view.update_cursors()
+                for &mut cursor in view.cursors.slice_mut() {
+                    line := view.buffer.get().lines[cursor.start.line]
+                    move_end := cursor.empty()
+                    if cursor.start.column <= 0 then continue
+                    for {cursor.start.column - 1} ..= 0 {
+                        if *line.characters[it] == ch {
+                            cursor.start.column = it + 1
+                            if move_end {
+                                cursor.end = cursor.start
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+
+            $cmd -> {
+                io.formatln("[ERROR] move command not implemented: {}", [&cmd])
+            }
+        }
+    }
+}
+
+impl MoveCommand {
+    invert :: (&Self) -> MoveCommand {
+        return match *self {
+            .Left -> MoveCommand.Right
+            .Right -> MoveCommand.Left
+            .Up -> MoveCommand.Down
+            .Down -> MoveCommand.Up
+            .Home -> MoveCommand.End
+            .End -> MoveCommand.Home
+            .BufferHome -> MoveCommand.BufferEnd
+            .BufferEnd -> MoveCommand.BufferHome
+            .PageUp -> MoveCommand.PageDown
+            .PageDown -> MoveCommand.PageUp
+            .SelectLeft -> MoveCommand.SelectRight
+            .SelectRight -> MoveCommand.SelectLeft
+            .SelectUp -> MoveCommand.SelectDown
+            .SelectDown -> MoveCommand.SelectUp
+            .SelectHome -> MoveCommand.SelectEnd
+            .SelectEnd -> MoveCommand.SelectHome
+            .SelectBufferHome -> MoveCommand.SelectBufferEnd
+            .SelectBufferEnd -> MoveCommand.SelectBufferHome
+            .SelectPageUp -> MoveCommand.SelectPageDown
+            .SelectPageDown -> MoveCommand.SelectPageUp
+            .GoToLineAbsolute -> MoveCommand.GoToLineAbsolute
+            .GoToLineRelativeTop -> MoveCommand.GoToLineRelativeTop
+            .GoToChar($ch) -> MoveCommand.GoToCharBack(ch)
+            .GoToCharBack($ch) -> MoveCommand.GoToChar(ch)
+            .GoBeforeChar($ch) -> MoveCommand.GoBeforeCharBack(ch)
+            .GoBeforeCharBack($ch) -> MoveCommand.GoBeforeChar(ch)
+            _ -> {
+                @assert(false)
+                MoveCommand.Home
+            }
+        }
+    }
+}

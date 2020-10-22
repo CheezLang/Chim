@@ -1,5 +1,6 @@
 use import std.string
 use import std.array
+use import std.map
 use import std.unicode
 use import std.mem.std_heap_allocator
 use import std.rc
@@ -13,6 +14,7 @@ use import glfw_hl
 use import editor
 use import chim
 use import gap_buffer
+use import commands
 
 #export_scope
 
@@ -100,6 +102,80 @@ Parser :: trait {
     advance         :: (&mut Self, event: KeyEvent);
     clone           :: (&Self) -> Rc[Parser];
     build_command   :: (&Self) -> Result[Command, String];
+    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]);
+}
+
+CharParser :: struct {
+    _state      : ParserState
+    name        : String
+    character   := '`0'
+}
+
+impl CharParser {
+    new :: (name: string) -> Rc[Parser] {
+        return Rc[Parser].new(CharParser(.InProgress, name.to_owned()))
+    }
+}
+
+impl Parser for CharParser {
+    state :: (&Self) -> ParserState {
+        return self._state
+    }
+
+    build_command :: (&Self) -> Result[Command, String] {
+        return Err(fmt.format("No command specified"))
+    }
+
+    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
+        match self._state {
+            .Success -> {
+                chars.set(self.name.slice(), self.character)
+            }
+            _ -> {}
+        }
+    }
+
+    clone :: (&mut Self) -> Rc[Parser] {
+        return Self.new(self.name.slice())
+    }
+
+    advance :: (&mut Self, event: KeyEvent) {
+        match self._state {
+            .InProgress -> {
+                match event.typ {
+                    .Char($ch) -> {
+                        if event.mods == .Shift {
+                            self.character = ch.to_upper()
+                            self._state = .Success
+                        } else if event.mods == .None {
+                            self.character = ch
+                            self._state = .Success
+                        } else {
+                            self._state = .Error
+                        }
+                    }
+
+                    .Space -> {
+                        if event.mods == .None {
+                            self.character = ' '
+                            self._state = .Success
+                        } else {
+                            self._state = .Error
+                        }
+                    }
+
+                    _ -> {
+                        self._state = .Error
+                    }
+                }
+            }
+            .Success -> {
+                self._state = .Error
+            }
+            .Error -> {
+            }
+        }
+    }
 }
 
 KeyParser :: struct {
@@ -125,6 +201,9 @@ impl Parser for KeyParser {
 
     build_command :: (&Self) -> Result[Command, String] {
         return Err(fmt.format("No command specified"))
+    }
+
+    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
@@ -168,6 +247,10 @@ SequenceParser :: struct {
     parsers : Array[Rc[Parser]]
     current : int
     _state  : ParserState
+
+    char_variables      := Map[string, char].new()
+    move_variables      := Map[string, MoveCommand].new()
+    command_variables   := Map[string, Command].new()
 }
 
 impl SequenceParser {
@@ -181,6 +264,8 @@ impl SequenceParser {
                 args.add(part.to_owned())
             }
         }
+
+        // io.formatln("command '{}', {} args", [command, args.count()])
         
         mut new_parsers := Array[Rc[Parser]].new(parsers.length)
         for &p in parsers {
@@ -188,6 +273,21 @@ impl SequenceParser {
         }
         return Rc[Parser].new(SequenceParser(
             command = main
+            args    = args
+            count   = 0
+            parsers = new_parsers
+            current = 0
+            _state  = .InProgress
+        ))
+    }
+
+    new2 :: (command: string, args: Array[String], parsers: []Rc[Parser]) -> Rc[Parser] {
+        mut new_parsers := Array[Rc[Parser]].new(parsers.length)
+        for &p in parsers {
+            new_parsers.add(p.get().clone())
+        }
+        return Rc[Parser].new(SequenceParser(
+            command = command.to_owned()
             args    = args
             count   = 0
             parsers = new_parsers
@@ -203,7 +303,7 @@ impl Parser for SequenceParser {
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
-        return Self.new(self.command.slice(), self.parsers[..])
+        return Self.new2(self.command.slice(), self.args.clone(), self.parsers[..])
     }
 
     build_command :: (&Self) -> Result[Command, String] {
@@ -211,11 +311,19 @@ impl Parser for SequenceParser {
             return Err(fmt.format("Invalid input"))
         }
 
+        for &parser in self.parsers[..] {
+            parser.get().store_variables(&mut self.char_variables, &mut self.move_variables, &mut self.command_variables)
+        }
+
         command := self.command.slice()
 
         if command.starts_with("move.") {
             name := command[5..]
-            typ := if name == "left" {
+            typ := if name == "repeat" {
+                CommandType.RepeatLastMove
+            } else if name == "repeat_inv" {
+                CommandType.RepeatLastMoveInv
+            } else if name == "left" {
                 CommandType.Move(MoveCommand.Left)
             } else if name == "right" {
                 CommandType.Move(MoveCommand.Right)
@@ -259,6 +367,50 @@ impl Parser for SequenceParser {
                 CommandType.Move(MoveCommand.GoToLineAbsolute)
             } else if name == "goto_line_relative_top" {
                 CommandType.Move(MoveCommand.GoToLineRelativeTop)
+            } else if name == "goto_char" {
+                if self.args.count() != 1 {
+                    return Err(fmt.format("Move command 'goto_char' requires one argument"))
+                }
+                match self.char_variables.get(self.args[0].slice()) {
+                    Some($ch) -> CommandType.Move(MoveCommand.GoToChar(*ch))
+
+                    None -> {
+                        return Err(fmt.format("No binding '{}' in goto_char", [self.args[0].slice()]))
+                    }
+                }
+            } else if name == "go_before_char" {
+                if self.args.count() != 1 {
+                    return Err(fmt.format("Move command 'go_before_char' requires one argument"))
+                }
+                match self.char_variables.get(self.args[0].slice()) {
+                    Some($ch) -> CommandType.Move(MoveCommand.GoBeforeChar(*ch))
+
+                    None -> {
+                        return Err(fmt.format("No binding '{}' in go_before_char", [self.args[0].slice()]))
+                    }
+                }
+            } else if name == "goto_char_back" {
+                if self.args.count() != 1 {
+                    return Err(fmt.format("Move command 'goto_char_back' requires one argument"))
+                }
+                match self.char_variables.get(self.args[0].slice()) {
+                    Some($ch) -> CommandType.Move(MoveCommand.GoToCharBack(*ch))
+
+                    None -> {
+                        return Err(fmt.format("No binding '{}' in goto_char_back", [self.args[0].slice()]))
+                    }
+                }
+            } else if name == "go_before_char_back" {
+                if self.args.count() != 1 {
+                    return Err(fmt.format("Move command 'go_before_char_back' requires one argument"))
+                }
+                match self.char_variables.get(self.args[0].slice()) {
+                    Some($ch) -> CommandType.Move(MoveCommand.GoBeforeCharBack(*ch))
+
+                    None -> {
+                        return Err(fmt.format("No binding '{}' in go_before_char_back", [self.args[0].slice()]))
+                    }
+                }
             } else {
                 return Err(fmt.format("Unknown move command: '{}'", [command]))
             }
@@ -330,6 +482,9 @@ impl Parser for SequenceParser {
         }
     }
 
+    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
+    }
+
     advance :: (&mut Self, event: KeyEvent) {
         parser_log("SequenceParser[{}].advance({})", [self.current, event])
 
@@ -359,9 +514,6 @@ impl Parser for SequenceParser {
                         .Success -> {
                             self.current += 1
                             if self.current == self.parsers.count() {
-                                if self.count == 0 {
-                                    self.count = 1
-                                }
                                 self._state = .Success
                             }
                         }
@@ -426,6 +578,9 @@ impl Parser for NormalParser {
         @assert(self.final_parser.is_some())
 
         return self.final_parser.unwrap_ref().get().build_command()
+    }
+
+    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
     }
 
     advance :: (&mut Self, event: KeyEvent) {
