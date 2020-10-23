@@ -1,0 +1,101 @@
+use import std.array
+use import std.string
+
+fs  :: import std.io.fs
+io  :: import std.io
+fmt :: import std.fmt
+
+stb :: import stb_image
+
+#export_scope
+
+// Main :: () {
+//     icon_path := fmt.format("./icons/icon.ico")
+//     match load_ico_file(icon_path.slice()) {
+//         Ok($ico) -> {
+
+//         }
+
+//         Err($err) -> {
+//             io.formatln("Failed to load icon file: {}", [err.slice()])
+//         }
+//     }
+// }
+
+IcoFile :: struct {
+    icons := Array[(width: int, height: int, data: ^u8)].new()
+}
+
+impl Drop for IcoFile {
+    drop :: (&Self) {
+        for icon in self.icons[..] {
+            stb.stbi_image_free(icon.data)
+        }
+    }
+}
+
+load_ico_file :: (path: string) -> Result[IcoFile, String] {
+    data := try(fs.read_file_binary(path))
+
+    // io.formatln("data: {}", [data[..]])
+
+    if read_number(u16, data[0..]) != 0 {
+        return Err(fmt.format("Invalid ico file. First two bytes must be zero"))
+    }
+
+    typ := read_number(u16, data[2..])
+    if typ != 1 {
+        return Err(fmt.format("Invalid ico file format. Only icon supported"))
+    }
+
+    image_count := read_number(u16, data[4..])
+    // io.formatln("image count: {}", [image_count])
+
+    mut result := IcoFile()
+
+    mut image_data := data[6..]
+    for 0 .. int(image_count) {
+        width   := read_number(u8, image_data[0..])
+        height  := read_number(u8, image_data[1..])
+        colors  := read_number(u8, image_data[2..])
+        _       := read_number(u8, image_data[3..])
+        planes  := read_number(u16, image_data[4..])
+        bits    := read_number(u16, image_data[6..])
+        size    := read_number(u32, image_data[8..])
+        offset  := read_number(u32, image_data[12..])
+
+        // io.formatln("{}, {}, {}, {}, {}, {}, {}", [width, height, colors, planes, bits, size, offset])
+
+        raw_data := data[int(offset)..]
+        mut x, y : i32, i32 = default
+        mut channels : i32 = default
+        pixel_data := stb.stbi_load_from_memory(cast raw_data.data, i32(raw_data.length), ^mut x, ^mut y, ^mut channels, 4)
+
+        if pixel_data == null {
+            reason := stb.stbi_failure_reason()
+            return Err(fmt.format("Failed to load image in ico file: {}", [string.from_cstring(reason)]))
+        }
+
+        // io.formatln("loaded {}/{} channels, {}/{} x {}/{}", [4, channels, x, width, y, height])
+
+        if x != i32(width) or y != i32(height) {
+            return Err(fmt.format("Failed to load image in ico file: width/height in ico header in data don't match"))
+        }
+
+        result.icons.add((int(x), int(y), pixel_data))
+
+        // go to next image entry
+        image_data = image_data[16..]
+    }
+
+    return Ok(result)
+}
+
+read_number :: ($T: type, data: []u8) -> T {
+    return match T {
+        u8 -> *data[0]
+        u16 -> @bin_or(@bin_lsl(u16(*data[1]), 8), u16(*data[0]))
+        u32 -> @bin_or(@bin_lsl(u32(*data[2]), 16), @bin_lsl(u32(*data[1]), 8), u32(*data[0]))
+        _ -> @static_assert(false, @typename(T) + " not allowed")
+    }
+}

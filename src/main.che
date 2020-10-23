@@ -20,6 +20,7 @@ use import imgui_glfw
 use import imgui_opengl
 imgui :: import imgui
 
+use import ico
 use import chim
 use import editor_input
 use import editor_render
@@ -50,7 +51,7 @@ Main :: () {
 
     args := get_cmd_args()
 
-    chim.initialize(exe_path, args[1..])
+    chim.initialize(exe_path.clone(), args[1..])
 
     glfwSetErrorCallback(glfw_error_callback)
 
@@ -115,6 +116,25 @@ Main :: () {
         h := 0i32
         glfwGetFramebufferSize(window, ^w, ^h)
         chim.on_framebuffer_resize(f32(w), f32(h))
+    }
+
+    // load and set icon
+    {
+        icon_path := fmt.format("{}/icon.ico", [exe_path])
+        match load_ico_file(icon_path.slice()) {
+            Ok($ico) -> {
+                mut icon_images := Array[GLFWimage].new(ico.icons.count())
+                for icon in ico.icons[..] {
+                    icon_images.push(GLFWimage(i32(icon.width), i32(icon.height), cast icon.data))
+                }
+
+                glfwSetWindowIcon(window, i32(icon_images.count()), icon_images.get_raw_mut())
+            }
+
+            Err($err) -> {
+                io.formatln("Failed to load icon file: {}", [err.slice()])
+            }
+        }
     }
 
     // imgui setup
