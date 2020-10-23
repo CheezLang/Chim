@@ -1,3 +1,5 @@
+#lib("./../icons/icon.res")
+
 use import std.rc
 use import std.box
 use import std.string
@@ -186,119 +188,122 @@ impl Chim {
 
         { // normal mode key bindings
             // move commands
-            self.register_move_command(.Normal, "move.left", [KeyParser.new(.Left)])
-            self.register_move_command(.Normal, "move.right", [KeyParser.new(.Right)])
-            self.register_move_command(.Normal, "move.up", [KeyParser.new(.Up)])
-            self.register_move_command(.Normal, "move.down", [KeyParser.new(.Down)])
-            self.register_move_command(.Normal, "move.line_home", [KeyParser.new(.Home)])
-            self.register_move_command(.Normal, "move.line_end", [KeyParser.new(.End)])
-            self.register_move_command(.Normal, "move.buffer_home", [KeyParser.new(.Home, .Control)])
-            self.register_move_command(.Normal, "move.buffer_end", [KeyParser.new(.End, .Control)])
-            self.register_move_command(.Normal, "move.page_up", [KeyParser.new(.PageUp)])
-            self.register_move_command(.Normal, "move.page_down", [KeyParser.new(.PageDown)])
-            self.register_move_command(.Normal, "move.select_left", [KeyParser.new(.Left, .Shift)])
-            self.register_move_command(.Normal, "move.select_right", [KeyParser.new(.Right, .Shift)])
-            self.register_move_command(.Normal, "move.select_up", [KeyParser.new(.Up, .Shift)])
-            self.register_move_command(.Normal, "move.select_down", [KeyParser.new(.Down, .Shift)])
-            self.register_move_command(.Normal, "move.select_line_home", [KeyParser.new(.Home, .Shift)])
-            self.register_move_command(.Normal, "move.select_line_end", [KeyParser.new(.End, .Shift)])
-            self.register_move_command(.Normal, "move.select_buffer_home", [KeyParser.new(.Home, .Control or .Shift)])
-            self.register_move_command(.Normal, "move.select_buffer_end", [KeyParser.new(.End, .Control or .Shift)])
-            self.register_move_command(.Normal, "move.select_page_up", [KeyParser.new(.PageUp, .Shift)])
-            self.register_move_command(.Normal, "move.select_page_down", [KeyParser.new(.PageDown, .Shift)])
-            self.register_move_command(.Normal, "move.goto_line_absolute", [KeyParser.new(.Char('g')), KeyParser.new(.Char('l'))])
-            self.register_move_command(.Normal, "move.goto_line_relative_top", [KeyParser.new(.Char('g')), KeyParser.new(.Char('t'))])
-            self.register_move_command(.Normal, "move.goto_char arg", [KeyParser.new(.Char('f')), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.goto_char_back arg", [KeyParser.new(.Char('f'), .Shift), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.go_before_char arg", [KeyParser.new(.Char('t')), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.go_before_char_back arg", [KeyParser.new(.Char('t'), .Shift), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.repeat", [KeyParser.new(.Char(','))])
-            self.register_move_command(.Normal, "move.repeat_inv", [KeyParser.new(.Char(';'))])
-    
+            self.register_move_command(.Normal, "move.left", [], [KeyParser.new(.Left)])
+            self.register_move_command(.Normal, "move.right", [], [KeyParser.new(.Right)])
+            self.register_move_command(.Normal, "move.up", [], [KeyParser.new(.Up)])
+            self.register_move_command(.Normal, "move.down", [], [KeyParser.new(.Down)])
+            self.register_move_command(.Normal, "move.line_home", [], [KeyParser.new(.Home)])
+            self.register_move_command(.Normal, "move.line_end", [], [KeyParser.new(.End)])
+            self.register_move_command(.Normal, "move.buffer_home", [], [KeyParser.new(.Home, .Control)])
+            self.register_move_command(.Normal, "move.buffer_end", [], [KeyParser.new(.End, .Control)])
+            self.register_move_command(.Normal, "move.page_up", [], [KeyParser.new(.PageUp)])
+            self.register_move_command(.Normal, "move.page_down", [], [KeyParser.new(.PageDown)])
+            self.register_move_command(.Normal, "move.select_left", [], [KeyParser.new(.Left, .Shift)])
+            self.register_move_command(.Normal, "move.select_right", [], [KeyParser.new(.Right, .Shift)])
+            self.register_move_command(.Normal, "move.select_up", [], [KeyParser.new(.Up, .Shift)])
+            self.register_move_command(.Normal, "move.select_down", [], [KeyParser.new(.Down, .Shift)])
+            self.register_move_command(.Normal, "move.select_line_home", [], [KeyParser.new(.Home, .Shift)])
+            self.register_move_command(.Normal, "move.select_line_end", [], [KeyParser.new(.End, .Shift)])
+            self.register_move_command(.Normal, "move.select_buffer_home", [], [KeyParser.new(.Home, .Control or .Shift)])
+            self.register_move_command(.Normal, "move.select_buffer_end", [], [KeyParser.new(.End, .Control or .Shift)])
+            self.register_move_command(.Normal, "move.select_page_up", [], [KeyParser.new(.PageUp, .Shift)])
+            self.register_move_command(.Normal, "move.select_page_down", [], [KeyParser.new(.PageDown, .Shift)])
+            self.register_move_command(.Normal, "move.goto_line_absolute", [], [KeyParser.new(.Char('g')), KeyParser.new(.Char('l'))])
+            self.register_move_command(.Normal, "move.goto_line_relative_top", [], [KeyParser.new(.Char('g')), KeyParser.new(.Char('t'))])
+            self.register_move_command(.Normal, "move.goto_char", ["arg"], [KeyParser.new(.Char('f')), CharParser.new("arg")])
+            self.register_move_command(.Normal, "move.goto_char_back", ["arg"], [KeyParser.new(.Char('f'), .Shift), CharParser.new("arg")])
+            self.register_move_command(.Normal, "move.go_before_char", ["arg"], [KeyParser.new(.Char('t')), CharParser.new("arg")])
+            self.register_move_command(.Normal, "move.go_before_char_back", ["arg"], [KeyParser.new(.Char('t'), .Shift), CharParser.new("arg")])
+            self.register_move_command(.Normal, "move.repeat", [], [KeyParser.new(.Char(','))])
+            self.register_move_command(.Normal, "move.repeat_inv", [], [KeyParser.new(.Char(';'))])
+
             // alternative key bindings
-            self.register_command(.Normal, "move.buffer_home", [KeyParser.new(.Char('g')), KeyParser.new(.Char('h'))])
-            self.register_command(.Normal, "move.buffer_end", [KeyParser.new(.Char('g')), KeyParser.new(.Char('e'))])
-    
+            self.register_command(.Normal, "move.buffer_home", [], [KeyParser.new(.Char('g')), KeyParser.new(.Char('h'))])
+            self.register_command(.Normal, "move.buffer_end", [], [KeyParser.new(.Char('g')), KeyParser.new(.Char('e'))])
+
             // editor commands
-            self.register_command(.Normal, "editor.tab_next", [KeyParser.new(.Tab, .Control)])
-            self.register_command(.Normal, "editor.tab_prev", [KeyParser.new(.Tab, .Control or .Shift)])
-            self.register_command(.Normal, "editor.buffer_save", [KeyParser.new(.Char('s'), .Control)])
-            self.register_command(.Normal, "editor.mode_insert", [KeyParser.new(.Char('i'))])
+            self.register_command(.Normal, "editor.tab_next", [], [KeyParser.new(.Tab, .Control)])
+            self.register_command(.Normal, "editor.tab_prev", [], [KeyParser.new(.Tab, .Control or .Shift)])
+            self.register_command(.Normal, "editor.buffer_save", [], [KeyParser.new(.Char('s'), .Control)])
+            self.register_command(.Normal, "editor.mode_insert", [], [KeyParser.new(.Char('i'))])
 
             // buffer commands
-            self.register_command(.Normal, "buffer.delete_left", [KeyParser.new(.Backspace)])
-            self.register_command(.Normal, "buffer.delete_right", [KeyParser.new(.Delete)])
-            self.register_command(.Normal, "buffer.delete_line", [KeyParser.new(.Char('d')), KeyParser.new(.Char('d'))])
-            self.register_command(.Normal, "buffer.indent_line", [KeyParser.new(.Tab)])
-            self.register_command(.Normal, "buffer.deindent_line", [KeyParser.new(.Tab, .Shift)])
-            self.register_command(.Normal, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
-            self.register_command(.Normal, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
-            self.register_command(.Normal, "buffer.copy", [KeyParser.new(.Char('c'), .Control)])
-            self.register_command(.Normal, "buffer.paste", [KeyParser.new(.Char('v'), .Control)])
+            self.register_command(.Normal, "buffer.delete_left", [], [KeyParser.new(.Backspace)])
+            self.register_command(.Normal, "buffer.delete_right", [], [KeyParser.new(.Delete)])
+            self.register_command(.Normal, "buffer.delete_line", [], [KeyParser.new(.Char('d')), KeyParser.new(.Char('d'))])
+            self.register_command(.Normal, "buffer.indent_line", [], [KeyParser.new(.Tab)])
+            self.register_command(.Normal, "buffer.deindent_line", [], [KeyParser.new(.Tab, .Shift)])
+            self.register_command(.Normal, "buffer.undo", [], [KeyParser.new(.Char('z'), .Control)])
+            self.register_command(.Normal, "buffer.redo", [], [KeyParser.new(.Char('y'), .Control)])
+            self.register_command(.Normal, "buffer.copy", [], [KeyParser.new(.Char('c'), .Control)])
+            self.register_command(.Normal, "buffer.paste", [], [KeyParser.new(.Char('v'), .Control)])
 
             // view commands
-            self.register_command(.Normal, "view.add_cursor_above", [KeyParser.new(.Up, .Shift or .Alt)])
-            self.register_command(.Normal, "view.add_cursor_below", [KeyParser.new(.Down, .Shift or .Alt)])
+            self.register_command(.Normal, "view.add_cursor_above", [], [KeyParser.new(.Up, .Shift or .Alt)])
+            self.register_command(.Normal, "view.add_cursor_below", [], [KeyParser.new(.Down, .Shift or .Alt)])
         }
 
         { // insert mode key bindings
             // move commands
-            self.register_move_command(.Insert, "move.left", [KeyParser.new(.Left)])
-            self.register_move_command(.Insert, "move.right", [KeyParser.new(.Right)])
-            self.register_move_command(.Insert, "move.up", [KeyParser.new(.Up)])
-            self.register_move_command(.Insert, "move.down", [KeyParser.new(.Down)])
-            self.register_move_command(.Insert, "move.line_home", [KeyParser.new(.Home)])
-            self.register_move_command(.Insert, "move.line_end", [KeyParser.new(.End)])
-            self.register_move_command(.Insert, "move.buffer_home", [KeyParser.new(.Home, .Control)])
-            self.register_move_command(.Insert, "move.buffer_end", [KeyParser.new(.End, .Control)])
-            self.register_move_command(.Insert, "move.page_up", [KeyParser.new(.PageUp)])
-            self.register_move_command(.Insert, "move.page_down", [KeyParser.new(.PageDown)])
-            self.register_move_command(.Insert, "move.select_left", [KeyParser.new(.Left, .Shift)])
-            self.register_move_command(.Insert, "move.select_right", [KeyParser.new(.Right, .Shift)])
-            self.register_move_command(.Insert, "move.select_up", [KeyParser.new(.Up, .Shift)])
-            self.register_move_command(.Insert, "move.select_down", [KeyParser.new(.Down, .Shift)])
-            self.register_move_command(.Insert, "move.select_line_home", [KeyParser.new(.Home, .Shift)])
-            self.register_move_command(.Insert, "move.select_line_end", [KeyParser.new(.End, .Shift)])
-            self.register_move_command(.Insert, "move.select_buffer_home", [KeyParser.new(.Home, .Control or .Shift)])
-            self.register_move_command(.Insert, "move.select_buffer_end", [KeyParser.new(.End, .Control or .Shift)])
-            self.register_move_command(.Insert, "move.select_page_up", [KeyParser.new(.PageUp, .Shift)])
-            self.register_move_command(.Insert, "move.select_page_down", [KeyParser.new(.PageDown, .Shift)])
+            self.register_move_command(.Insert, "move.left", [], [KeyParser.new(.Left)])
+            self.register_move_command(.Insert, "move.right", [], [KeyParser.new(.Right)])
+            self.register_move_command(.Insert, "move.up", [], [KeyParser.new(.Up)])
+            self.register_move_command(.Insert, "move.down", [], [KeyParser.new(.Down)])
+            self.register_move_command(.Insert, "move.line_home", [], [KeyParser.new(.Home)])
+            self.register_move_command(.Insert, "move.line_end", [], [KeyParser.new(.End)])
+            self.register_move_command(.Insert, "move.buffer_home", [], [KeyParser.new(.Home, .Control)])
+            self.register_move_command(.Insert, "move.buffer_end", [], [KeyParser.new(.End, .Control)])
+            self.register_move_command(.Insert, "move.page_up", [], [KeyParser.new(.PageUp)])
+            self.register_move_command(.Insert, "move.page_down", [], [KeyParser.new(.PageDown)])
+            self.register_move_command(.Insert, "move.select_left", [], [KeyParser.new(.Left, .Shift)])
+            self.register_move_command(.Insert, "move.select_right", [], [KeyParser.new(.Right, .Shift)])
+            self.register_move_command(.Insert, "move.select_up", [], [KeyParser.new(.Up, .Shift)])
+            self.register_move_command(.Insert, "move.select_down", [], [KeyParser.new(.Down, .Shift)])
+            self.register_move_command(.Insert, "move.select_line_home", [], [KeyParser.new(.Home, .Shift)])
+            self.register_move_command(.Insert, "move.select_line_end", [], [KeyParser.new(.End, .Shift)])
+            self.register_move_command(.Insert, "move.select_buffer_home", [], [KeyParser.new(.Home, .Control or .Shift)])
+            self.register_move_command(.Insert, "move.select_buffer_end", [], [KeyParser.new(.End, .Control or .Shift)])
+            self.register_move_command(.Insert, "move.select_page_up", [], [KeyParser.new(.PageUp, .Shift)])
+            self.register_move_command(.Insert, "move.select_page_down", [], [KeyParser.new(.PageDown, .Shift)])
 
             // editor commands
-            self.register_command(.Insert, "editor.tab_next", [KeyParser.new(.Tab, .Control)])
-            self.register_command(.Insert, "editor.tab_prev", [KeyParser.new(.Tab, .Control or .Shift)])
-            self.register_command(.Insert, "editor.buffer_save", [KeyParser.new(.Char('s'), .Control)])
-            self.register_command(.Insert, "editor.mode_normal", [KeyParser.new(.Char('e'), .Control)])
-            self.register_command(.Insert, "editor.mode_normal", [KeyParser.new(.Escape)])
+            self.register_command(.Insert, "editor.tab_next", [], [KeyParser.new(.Tab, .Control)])
+            self.register_command(.Insert, "editor.tab_prev", [], [KeyParser.new(.Tab, .Control or .Shift)])
+            self.register_command(.Insert, "editor.buffer_save", [], [KeyParser.new(.Char('s'), .Control)])
+            self.register_command(.Insert, "editor.mode_normal", [], [KeyParser.new(.Char('e'), .Control)])
+            self.register_command(.Insert, "editor.mode_normal", [], [KeyParser.new(.Escape)])
 
             // buffer commands
-            self.register_command(.Insert, "buffer.delete_left", [KeyParser.new(.Backspace)])
-            self.register_command(.Insert, "buffer.delete_right", [KeyParser.new(.Delete)])
-            self.register_command(.Insert, "buffer.insert_tab", [KeyParser.new(.Tab)])
-            self.register_command(.Insert, "buffer.undo", [KeyParser.new(.Char('z'), .Control)])
-            self.register_command(.Insert, "buffer.redo", [KeyParser.new(.Char('y'), .Control)])
-            self.register_command(.Insert, "buffer.copy", [KeyParser.new(.Char('c'), .Control)])
-            self.register_command(.Insert, "buffer.paste", [KeyParser.new(.Char('v'), .Control)])
+            self.register_command(.Insert, "buffer.delete_left", [], [KeyParser.new(.Backspace)])
+            self.register_command(.Insert, "buffer.delete_right", [], [KeyParser.new(.Delete)])
+            self.register_command(.Insert, "buffer.insert_tab", [], [KeyParser.new(.Tab)])
+            self.register_command(.Insert, "buffer.undo", [], [KeyParser.new(.Char('z'), .Control)])
+            self.register_command(.Insert, "buffer.redo", [], [KeyParser.new(.Char('y'), .Control)])
+            self.register_command(.Insert, "buffer.copy", [], [KeyParser.new(.Char('c'), .Control)])
+            self.register_command(.Insert, "buffer.paste", [], [KeyParser.new(.Char('v'), .Control)])
+            self.register_command(.Insert, "buffer.insert_char", ["ch"], [CharParser.new("ch")])
+            self.register_command(.Insert, "buffer.insert_char", ["' '"], [KeyParser.new(.Space, .Shift)])
+            self.register_command(.Insert, "buffer.insert_char", ["'`n'"], [KeyParser.new(.Enter)])
 
             // view commands
-            self.register_command(.Insert, "view.add_cursor_above", [KeyParser.new(.Up, .Shift or .Alt)])
-            self.register_command(.Insert, "view.add_cursor_below", [KeyParser.new(.Down, .Shift or .Alt)])
+            self.register_command(.Insert, "view.add_cursor_above", [], [KeyParser.new(.Up, .Shift or .Alt)])
+            self.register_command(.Insert, "view.add_cursor_below", [], [KeyParser.new(.Down, .Shift or .Alt)])
         }
     }
 
-    register_command :: (&mut Self, mode: Mode, command: string, steps: []Rc[Parser]) {
+    register_command :: (&mut Self, mode: Mode, command: string, args: []string, steps: []Rc[Parser]) {
         match mode {
-            .Normal -> self.n_normal_parsers.add(SequenceParser.new(command, steps))
-            .Insert -> self.i_normal_parsers.add(SequenceParser.new(command, steps))
-            .Visual -> self.v_normal_parsers.add(SequenceParser.new(command, steps))
+            .Normal -> self.n_normal_parsers.add(SequenceParser.new(command, args, steps))
+            .Insert -> self.i_normal_parsers.add(SequenceParser.new(command, args, steps))
+            .Visual -> self.v_normal_parsers.add(SequenceParser.new(command, args, steps))
         }
     }
 
-    register_move_command :: (&mut Self, mode: Mode, command: string, steps: []Rc[Parser]) {
+    register_move_command :: (&mut Self, mode: Mode, command: string, args: []string, steps: []Rc[Parser]) {
         match mode {
-            .Normal -> self.n_move_parsers.add(SequenceParser.new(command, steps))
-            .Insert -> self.i_move_parsers.add(SequenceParser.new(command, steps))
-            .Visual -> self.v_move_parsers.add(SequenceParser.new(command, steps))
+            .Normal -> self.n_move_parsers.add(SequenceParser.new(command, args, steps))
+            .Insert -> self.i_move_parsers.add(SequenceParser.new(command, args, steps))
+            .Visual -> self.v_move_parsers.add(SequenceParser.new(command, args, steps))
         }
     }
 

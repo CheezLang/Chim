@@ -103,6 +103,7 @@ Parser :: trait {
     clone           :: (&Self) -> Rc[Parser];
     build_command   :: (&Self) -> Result[Command, String];
     store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]);
+    accepts_numbers :: (&Self) -> bool;
 }
 
 CharParser :: struct {
@@ -120,6 +121,10 @@ impl CharParser {
 impl Parser for CharParser {
     state :: (&Self) -> ParserState {
         return self._state
+    }
+
+    accepts_numbers :: (&Self) -> bool {
+        return true
     }
 
     build_command :: (&Self) -> Result[Command, String] {
@@ -140,10 +145,13 @@ impl Parser for CharParser {
     }
 
     advance :: (&mut Self, event: KeyEvent) {
+        parser_log("CharParser['{}'].advance({})", [self.name.slice(), event])
+
         match self._state {
             .InProgress -> {
                 match event.typ {
                     .Char($ch) -> {
+                        parser_log("CharParser['{}'].advance({}).InProgress '{}'", [self.name.slice(), event, ch])
                         if event.mods == .Shift {
                             self.character = ch.to_upper()
                             self._state = .Success
@@ -197,6 +205,10 @@ impl KeyParser {
 impl Parser for KeyParser {
     state :: (&Self) -> ParserState {
         return self._state
+    }
+
+    accepts_numbers :: (&Self) -> bool {
+        return false
     }
 
     build_command :: (&Self) -> Result[Command, String] {
@@ -254,34 +266,12 @@ SequenceParser :: struct {
 }
 
 impl SequenceParser {
-    new :: (command: string, parsers: []Rc[Parser]) -> Rc[Parser] {
-        mut main := String.empty()
+    new :: (command: string, arguments: []string, parsers: []Rc[Parser]) -> Rc[Parser] {
         mut args := Array[String].new()
-        for part in command.split_at_char(' ', remove_empty = true) {
-            if it_index == 0 {
-                main = part.to_owned()
-            } else {
-                args.add(part.to_owned())
-            }
+        for arg in arguments {
+            args.add(arg.to_owned())
         }
 
-        // io.formatln("command '{}', {} args", [command, args.count()])
-        
-        mut new_parsers := Array[Rc[Parser]].new(parsers.length)
-        for &p in parsers {
-            new_parsers.add(p.get().clone())
-        }
-        return Rc[Parser].new(SequenceParser(
-            command = main
-            args    = args
-            count   = 0
-            parsers = new_parsers
-            current = 0
-            _state  = .InProgress
-        ))
-    }
-
-    new2 :: (command: string, args: Array[String], parsers: []Rc[Parser]) -> Rc[Parser] {
         mut new_parsers := Array[Rc[Parser]].new(parsers.length)
         for &p in parsers {
             new_parsers.add(p.get().clone())
@@ -295,6 +285,27 @@ impl SequenceParser {
             _state  = .InProgress
         ))
     }
+
+    new2 :: (command: String, args: Array[String], parsers: []Rc[Parser]) -> Rc[Parser] {
+        mut new_parsers := Array[Rc[Parser]].new(parsers.length)
+        for &p in parsers {
+            new_parsers.add(p.get().clone())
+        }
+        return Rc[Parser].new(SequenceParser(
+            command = command
+            args    = args
+            count   = 0
+            parsers = new_parsers
+            current = 0
+            _state  = .InProgress
+        ))
+    }
+}
+
+Argument :: enum #copy {
+    Char    : char
+    Move    : MoveCommand
+    // Command : CommandType
 }
 
 impl Parser for SequenceParser {
@@ -303,7 +314,11 @@ impl Parser for SequenceParser {
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
-        return Self.new2(self.command.slice(), self.args.clone(), self.parsers[..])
+        return Self.new2(self.command.clone(), self.args.clone(), self.parsers[..])
+    }
+
+    accepts_numbers :: (&Self) -> bool {
+        return if current >= 0 and current < self.parsers.count() then self.parsers[current].get().accepts_numbers() else false
     }
 
     build_command :: (&Self) -> Result[Command, String] {
@@ -443,8 +458,6 @@ impl Parser for SequenceParser {
                 CommandType.DeleteLeft
             } else if name == "delete_right" {
                 CommandType.DeleteRight
-            } else if name == "insert_char" {
-                CommandType.DeleteRight
             } else if name == "insert_tab" {
                 CommandType.Edit(EditCommand.InsertTab)
             } else if name == "indent_line" {
@@ -459,6 +472,14 @@ impl Parser for SequenceParser {
                 CommandType.Edit(EditCommand.Copy)
             } else if name == "paste" {
                 CommandType.Edit(EditCommand.Paste)
+            } else if name == "insert_char" {
+                arg := try(self.get_argument(0))
+                match arg {
+                    .Char($ch) -> CommandType.Edit(EditCommand.InsertChar(ch))
+                    $arg -> {
+                        return Err(fmt.format("Invalid argument to insert_char: {}", [arg]))
+                    }
+                }
             } else {
                 return Err(fmt.format("Unknown view command: '{}'", [command]))
             }
@@ -482,6 +503,30 @@ impl Parser for SequenceParser {
         }
     }
 
+    get_argument :: (&Self, index: int) -> Result[Argument, String] {
+        if index < 0 or index >= self.args.count() {
+            return Err(fmt.format("No argument at index {}", [index]))
+        }
+
+        arg := self.args[index].slice()
+
+        return if arg.starts_with("'") and arg.ends_with("'") {
+            str := arg[1 .. (arg.bytes.length - 1)]
+
+            ch, len := Utf8.decode(str.bytes)
+            if len > 0 and int(len) == str.bytes.length {
+                Ok(Argument.Char(ch))
+            } else {
+                Err(fmt.format("Exactly one character must be between ' and '"))
+            }
+        } else {
+            match self.char_variables.get(arg) {
+                Some($ch) -> Ok(Argument.Char(*ch))
+                None -> Err(fmt.format("No char variable with name '{}' found", [arg]))
+            }
+        }
+    }
+
     store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
     }
 
@@ -490,7 +535,7 @@ impl Parser for SequenceParser {
 
         match self._state {
             .InProgress -> {
-                if self.current == 0 and event.mods == .None {
+                if self.current == 0 and event.mods == .None and !self.parsers[0].get().accepts_numbers() {
                     match event.typ {
                         .Char($ch) if ch.is_digit() -> {
                             self.count = self.count * 10 + int(ch - '0')
@@ -564,6 +609,21 @@ impl NormalParser {
 impl Parser for NormalParser {
     state :: (&Self) -> ParserState {
         return self._state
+    }
+
+    accepts_numbers :: (&Self) -> bool {
+        for &parser in self.normal_parsers[..] {
+            if parser.get().accepts_numbers() then {
+                return true
+            }
+        }
+        for &parser in self.move_parsers[..] {
+            if parser.get().accepts_numbers() then {
+                return true
+            }
+        }
+
+        return false
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
@@ -689,41 +749,6 @@ impl Chim {
     handle_key_event :: (&mut Self, event: KeyEvent) {
         // io.formatln("===========================")
         // io.formatln("{}", [&event])
-
-        if self.current_mode == .Insert {
-            match event.mods, event.typ {
-                GlfwMod.None, KeyEventType.Char($ch) -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char(ch)
-                    return
-                }
-                GlfwMod.Shift, KeyEventType.Char($ch) -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char(ch.to_upper())
-                    return
-                }
-
-                GlfwMod.None, KeyEventType.Space -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char(' ')
-                    return
-                }
-
-                GlfwMod.Shift, KeyEventType.Space -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char(' ')
-                    return
-                }
-
-                GlfwMod.None, KeyEventType.Enter -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char('`n')
-                    return
-                }
-
-                _ -> {}
-            }
-        }
 
         self.key_events.add(event)
 
