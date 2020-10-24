@@ -55,6 +55,7 @@ CommandType :: enum {
     SwitchMode      : Mode
     ChangeFontSize  : f32
     ChangeFont      : String
+    ExecuteCommand
     TabNext, TabPrev
     DeleteLeft, DeleteRight
     DeleteLine
@@ -63,21 +64,64 @@ CommandType :: enum {
     RepeatLastMoveInv
 }
 
+impl Clone for CommandType {
+    clone :: (&Self) -> CommandType {
+        return match self {
+            .ChangeFont($str) -> .ChangeFont(str.clone())
+            $cmd -> *cmd
+        }
+    }
+}
+
 Command :: struct {
     count   : int
     typ     : CommandType
 }
 
 impl Chim {
-    execute_command :: (&mut Self, count: int, command: &CommandType) {
+    parse_and_execute_command :: (&mut Self, command: string) {
+        io.formatln("parse_and_execute_command: '{}'", [&command])
+
+        // temp
+        if command.starts_with("buffer.set_name") {
+            name := command[16..]
+            view := self.tabs[self.active_tab].get().get_active_view()
+            buffer := view.get().buffer.get_mut()
+            buffer.file = Some(name.to_owned())
+            buffer.dirty = true
+        }
+    }
+
+    execute_command :: (&mut Self, count: int, command: CommandType) {
         count := if count == 0 then 1 else count
         match command {
             .SwitchMode($mode) -> {
-                self.current_mode = *mode
+                self.current_mode = mode
+
+                match self.current_mode {
+                    .Command -> {
+                        self.active_view = self.command_view.clone()
+                    }
+
+                    _ -> {
+                        self.active_view = self.tabs[self.active_tab].get().get_active_view()
+                    }
+                }
+            }
+
+            .ExecuteCommand -> {
+                buffer := self.command_view.get().buffer.get_mut()
+                start, end := Position(0, 0), Position(buffer.lines.count() - 1, buffer.lines[buffer.lines.count() - 1].characters.count())
+                text := buffer.get_text(start, end)
+                buffer.erase_range(start, Position(end.line, end.column), 0)
+                buffer.flush_changes()
+                self.command_view.get_mut().update_cursors()
+                self.execute_command(1, .SwitchMode(Mode.Normal))
+                self.parse_and_execute_command(text.slice())
             }
 
             .BufferSave -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 try_with(view.get().buffer.get().write_to_disk(), {
                     io.formatln("[ERROR] {}", [&err])
                 })
@@ -96,21 +140,21 @@ impl Chim {
             }
 
             .DeleteLine -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().delete_line()
                 }
             }
 
             .DeleteLeft -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().delete_at_cursor()
                 }
             }
 
             .DeleteRight -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column(1)
                     view.get_mut().delete_at_cursor()
@@ -119,12 +163,12 @@ impl Chim {
 
             .View($view) -> match view {
                 // .AddCursorAbove -> {
-                //     view := self.tabs[self.active_tab].get().get_active_view()
+                //     view := self.active_view.clone()
                 //     view.get_mut().add_cursor_below()
                 // }
 
                 .AddCursorBelow -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view := self.active_view.clone()
                     view.get_mut().add_cursor_below()
                 }
 
@@ -135,7 +179,7 @@ impl Chim {
 
             .Edit($edit) -> match edit {
                 // .InsertTab -> {
-                //     view := self.tabs[self.active_tab].get().get_active_view()
+                //     view := self.active_view.clone()
                 //     if self.use_tab_char {
                 //         for 0 .. count {
                 //             view.get_mut().insert_char('`t')
@@ -151,7 +195,7 @@ impl Chim {
                 //     }
                 // }
                 // .IndentLine -> {
-                //     view := self.tabs[self.active_tab].get().get_active_view()
+                //     view := self.active_view.clone()
                 //     view.get_mut().clamp_or_wrap_cursor_position(false)
                 //     buffer := view.get().buffer.get_mut()
                 //     cursor := &view.get().cursor
@@ -182,7 +226,7 @@ impl Chim {
                 //     }
                 // }
                 // .DeindentLine -> {
-                    // view := self.tabs[self.active_tab].get().get_active_view()
+                    // view := self.active_view.clone()
                     // view.get_mut().clamp_or_wrap_cursor_position(false)
                     // buffer := view.get().buffer.get_mut()
                     // cursor := &view.get().cursor
@@ -220,17 +264,17 @@ impl Chim {
                 // }
 
                 .Undo -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view := self.active_view.clone()
                     view.get_mut().undo()
                 }
 
                 .Redo -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view := self.active_view.clone()
                     view.get_mut().redo()
                 }
 
                 .Copy -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view := self.active_view.clone()
                     text := view.get().get_selected_text()
                     match Clipboard.set_string(text.slice()) {
                         Ok() -> {}
@@ -241,7 +285,7 @@ impl Chim {
                 }
 
                 .Paste -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
+                    view := self.active_view.clone()
                     match Clipboard.get_string() {
                         Ok($str) -> {
                             view.get_mut().insert_string(str.slice())
@@ -253,8 +297,8 @@ impl Chim {
                 }
 
                 .InsertChar($ch) -> {
-                    view := self.tabs[self.active_tab].get().get_active_view()
-                    view.get_mut().insert_char(*ch)
+                    view := self.active_view.clone()
+                    view.get_mut().insert_char(ch)
                 }
 
                 $cmd -> {
@@ -273,8 +317,8 @@ impl Chim {
             }
 
             .Move($move) -> {
-                self.last_move_command = Some(count, *move)
-                self.execute_move_command(count, *move)
+                self.last_move_command = Some(count, move)
+                self.execute_move_command(count, move)
             }
 
             $cmd -> {
@@ -286,152 +330,152 @@ impl Chim {
     execute_move_command :: (&mut Self, count: int, command: MoveCommand) {
         match command {
             .Left -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column(-1)
                 }
             }
 
             .Right -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column(1)
                 }
             }
 
             .Up -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(-1)
                 }
             }
 
             .Down -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(1)
                 }
             }
 
             .Home -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column_beginning()
                 }
             }
 
             .End -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column_end()
                 }
             }
 
             .BufferHome -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_beginning()
                 }
             }
 
             .BufferEnd -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_end()
                 }
             }
 
             .PageUp -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2)
                 }
             }
 
             .PageDown -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(self.get_window_dim().rows / 2)
                 }
             }
 
             .SelectLeft -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column(-1, true)
                 }
             }
 
             .SelectRight -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column(1, true)
                 }
             }
 
             .SelectUp -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(-1, true)
                 }
             }
 
             .SelectDown -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(1, true)
                 }
             }
 
             .SelectHome -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column_beginning(true)
                 }
             }
 
             .SelectEnd -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_column_end(true)
                 }
             }
 
             .SelectBufferHome -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_beginning(true)
                 }
             }
 
             .SelectBufferEnd -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_end(true)
                 }
             }
 
             .SelectPageUp -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(-self.get_window_dim().rows / 2, true)
                 }
             }
 
             .SelectPageDown -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 for 0 .. count {
                     view.get_mut().move_cursor_line(self.get_window_dim().rows / 2, true)
                 }
             }
 
             .GoToLineAbsolute -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 view.get_mut().set_cursor_line(count - 1)
             }
 
             .GoToLineRelativeTop -> {
-                view := self.tabs[self.active_tab].get().get_active_view()
+                view := self.active_view.clone()
                 view.get_mut().set_cursor_line(view.get().top_line + count - 1)
             }
 

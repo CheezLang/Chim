@@ -494,6 +494,7 @@ impl Chim {
             .Normal -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
             .Visual -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
             .Insert -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Line
+            .Command -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Line
             _       -> CursorType.Underscore
         }
         for &cursor in visual_cursors[..] {
@@ -529,14 +530,22 @@ impl Chim {
         self.render_text_at(col + align - digits - offset, row, line_no_string.slice(), .Default, .MenuBackground)
     }
 
-    render_command_line :: (&mut Self, row: int) {
+    render_command_line :: (&mut Self, row: int, rows: int) {
         mut col := 0
 
         // fill rest of line with menu background
         cols, _ := self.get_window_dim()
-        for col .. cols {
-            *self.slots[it + row * SLOTS_X] = Slot('`0', .Default, .MenuBackground)
+        for row in row .. (row + rows) {
+            for col in col .. cols {
+                *self.slots[col + row * SLOTS_X] = Slot('`0', .Default, .Background)
+            }
         }
+
+        // always scroll as far up as possible
+        if self.command_view.get_mut().top_line + rows > self.command_view.get().buffer.get().lines.count() {
+            self.command_view.get_mut().top_line = self.command_view.get().buffer.get().lines.count() - rows
+        }
+        self.render_view(self.command_view.get_mut(), (0, row), (cols, row + rows))
     }
 
     render_status_line :: (&mut Self, row: int) {
@@ -560,6 +569,10 @@ impl Chim {
 
             .Visual -> {
                 col = self.render_text_at(col, row, "VISUAL", .Default, .MenuBackground)
+            }
+
+            .Command -> {
+                col = self.render_text_at(col, row, "COMMAND", .Default, .MenuBackground)
             }
 
             _ -> {}

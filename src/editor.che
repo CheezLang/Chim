@@ -372,6 +372,10 @@ impl Buffer {
                     }
                 }
 
+                if self.lines.count() == 0 {
+                    self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
+                }
+
                 // io.formatln("deleted text: '{}'", [deleted_text.slice()])
                 BufferEdit.InsertText((id, start, deleted_text))
             }
@@ -379,9 +383,15 @@ impl Buffer {
             .DeleteLine(($id, $line)) -> {
                 // io.formatln("DeleteLine({})", [line])
                 deleted_text := self.lines[line].get_text()
-                lines.erase(line)
                 // io.formatln("deleted text: '{}'", [deleted_text.slice()])
-                BufferEdit.InsertLine((id, line, deleted_text))
+                lines.erase(line)
+
+                if self.lines.count() == 0 {
+                    self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
+                    BufferEdit.InsertText((id, Position(line, 0), deleted_text))
+                } else {
+                    BufferEdit.InsertLine((id, line, deleted_text))
+                }
             }
 
             .Group($group) -> {
@@ -1013,7 +1023,7 @@ impl View {
                 return Position(0, position.column)
             }
         } else if position.line >= buffer.lines.count() {
-            line := buffer.lines[position.line - 1]
+            line := buffer.lines[buffer.lines.count() - 1]
             if position.column < 0 {
                 return Position(buffer.lines.count() - 1, 0)
             } else if position.column > line.characters.count() {

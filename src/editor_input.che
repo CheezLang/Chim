@@ -442,6 +442,10 @@ impl Parser for SequenceParser {
                 CommandType.SwitchMode(Mode.Insert)
             } else if name == "mode_normal" {
                 CommandType.SwitchMode(Mode.Normal)
+            } else if name == "mode_command" {
+                CommandType.SwitchMode(Mode.Command)
+            } else if name == "execute_command" {
+                CommandType.ExecuteCommand
             } else if name == "buffer_save" {
                 CommandType.BufferSave
             } else {
@@ -755,17 +759,13 @@ impl Chim {
         if self.current_parser.is_none() {
             parser_log("handle_key_event: creating new parser")
 
-            match self.current_mode {
-                .Normal -> {
-                    self.current_parser = Some(NormalParser.new(self.n_normal_parsers[..], self.n_move_parsers[..]))
+            match self.parsers.get(current_mode) {
+                Some($parsers) -> {
+                    self.current_parser = Some(NormalParser.new(parsers.normal[..], parsers.move[..]))
                 }
 
-                .Insert -> {
-                    self.current_parser = Some(NormalParser.new(self.i_normal_parsers[..], self.i_move_parsers[..]))
-                }
-
-                .Visual -> {
-                    self.current_parser = Some(NormalParser.new(self.v_normal_parsers[..], self.v_move_parsers[..]))
+                None -> {
+                    @assert(false)
                 }
             }
         }
