@@ -51,7 +51,10 @@ Main :: () {
 
     args := get_cmd_args()
 
-    chim.initialize(exe_path.clone(), args[1..])
+    try_with(chim.initialize(exe_path.clone(), args[1..]), {
+        io.formatln("[ERROR] {}", [&err])
+        return
+    })
 
     glfwSetErrorCallback(glfw_error_callback)
 

@@ -21,6 +21,7 @@ use import glfw_hl
 use import imgui_hl
 use import imgui_opengl
 imgui :: import imgui
+lua :: import lua_cheez
 
 use import editor
 use import gap_buffer
@@ -82,6 +83,8 @@ Chim :: struct {
     slots           : []mut Slot
     /// path of this executable
     exe_path        := ".".to_owned()
+
+    lua_state       := Rc[lua.State].empty()
 
     cursors         := Array[(col: int, row: int, typ: CursorType)].new()
     commands        := RingQueue[Command].new()
@@ -175,7 +178,11 @@ impl Chim {
         }
     }
 
-    initialize :: (&mut Self, exe_path: String, args: []String) {
+    initialize :: (&mut Self, exe_path: String, args: []String) -> Result[(), String] {
+        self.lua_state = Rc[lua.State].new(try_with(lua.State.new(), {
+            return Err(fmt.format("Failed to create lua state: {}", [err]))
+        }))
+
         self.exe_path = exe_path
         for row in 0 .. SLOTS_X {
             for col in 0 .. SLOTS_Y {
@@ -355,6 +362,8 @@ impl Chim {
             self.register_command(.Command, "buffer.insert_char", ["' '"], [KeyParser.new(.Space, .Shift)])
             self.register_command(.Command, "buffer.insert_char", ["'`n'"], [KeyParser.new(.Enter, .Shift)])
         }
+
+        return Ok()
     }
 
     register_command :: (&mut Self, mode: Mode, command: string, args: []string, steps: []Rc[Parser]) {

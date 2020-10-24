@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param ([Parameter(ValueFromRemainingArguments)] [string[]] $Passthrough)
-&cheezc ./src/main.che --out ./bin --name chim --time --error-source --modules ../libraries/GLFW/glfw ../libraries/imgui/src ../libraries/stb_image/stb_image --subsystem windows --opt @Passthrough
+&cheezc ./src/main.che --out ./bin --name chim --time --error-source --modules ../libraries/lua/lua ../libraries/GLFW/glfw ../libraries/imgui/src ../libraries/stb_image/stb_image --subsystem windows --opt @Passthrough
 
 $install_dir = "D:\Program Files\chim"
 if (-not (Test-Path $install_dir)) {
