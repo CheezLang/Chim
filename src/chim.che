@@ -29,6 +29,7 @@ use import editor_input
 use import editor_render
 use import clipboard
 use import commands
+use import scripting
 
 vec2 :: imgui.ImVec2
 vec4 :: imgui.ImVec4
@@ -84,7 +85,7 @@ Chim :: struct {
     /// path of this executable
     exe_path        := ".".to_owned()
 
-    lua_state       := Rc[lua.State].empty()
+    scripting_engine:= Rc[ScriptingEngine].empty()
 
     cursors         := Array[(col: int, row: int, typ: CursorType)].new()
     commands        := RingQueue[Command].new()
@@ -179,9 +180,12 @@ impl Chim {
     }
 
     initialize :: (&mut Self, exe_path: String, args: []String) -> Result[(), String] {
-        self.lua_state = Rc[lua.State].new(try_with(lua.State.new(), {
-            return Err(fmt.format("Failed to create lua state: {}", [err]))
-        }))
+        self.scripting_engine = try(ScriptingEngine.new())
+
+        config_path := fmt.format("{}/config/config.lua", [&exe_path])
+        io.formatln("[Chim] loading config file...")
+        self.scripting_engine.get_mut().load_file(config_path.slice())
+        io.formatln("[Chim] config file loaded")
 
         self.exe_path = exe_path
         for row in 0 .. SLOTS_X {

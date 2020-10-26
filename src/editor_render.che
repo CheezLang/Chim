@@ -877,6 +877,8 @@ impl Chim {
             imgui.LabelText("Frame duration", delta_time_str.as_cstring())
             fps_counted_str := fmt.format_any(fps)
             imgui.LabelText("Fps", fps_counted_str.as_cstring())
+            lua_mem_str := fmt.format("{}kb", [self.scripting_engine.get_mut().state.get_used_memory()])
+            imgui.LabelText("Lua memory", lua_mem_str.as_cstring())
 
             imgui.Separator()
 
