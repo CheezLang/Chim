@@ -183,8 +183,8 @@ impl Drop for Buffer {
     }
 }
 
+/// args: self, key
 user_data_index :: (state: &mut lua.State) -> Result[int, String] {
-    // io.formatln("[user_data_index] user_data_index")
     arg_count := state.get_top()
     if arg_count != 2 {
         return Err(fmt.format("[user_data_index] only accepts exactly 2 arguments"))
@@ -194,16 +194,24 @@ user_data_index :: (state: &mut lua.State) -> Result[int, String] {
         return Err(fmt.format("[user_data_index] not a userdata"))
     })
 
-    // get metatable of user data
+    // push metatable of user data at index 3
     if !state.get_metatable(1) {
         return Err(fmt.format("[user_data_index] no key found"))
     }
     // push key
     state.push_value(2)
-    typ := lua.Type(lua_rawget(state.state, -2))
+    typ := lua.Type(lua_rawget(state.state, 3))
     return match typ {
-        .Nil    -> Err(fmt.format("[user_data_index] no key found"))
-        _       -> Ok(1)
+        .Nil -> match state.get_field(3, "__custom_index") {
+            .Nil -> Err(fmt.format("[user_data_index] no key found"))
+            $typ -> {
+                state.push_value(1)
+                state.push_value(2)
+                try(state.call(2))
+                Ok(1)
+            }
+        }
+        _ -> Ok(1)
     }
 }
 
@@ -236,6 +244,40 @@ new_buffer :: (state: &mut lua.State) -> Result[int, String] {
     state.set_metatable(-2)
 
     return Ok(1)
+}
+
+buffer_index :: (state: &mut lua.State) -> Result[int, String] {
+    arg_count := state.get_top()
+    if arg_count != 2 {
+        return Err(fmt.format("[buffer_index] only accepts exactly 1 arguments"))
+    }
+
+    user_data := cast(^mut UserData) try_with(state.to_user_data(1), {
+        return Err(fmt.format("[buffer_index] not a userdata"))
+    })
+
+    return match &*user_data {
+        .Buff($buffer) -> match state.to_int(2) {
+            Ok($value) -> {
+                if value == 0 {
+                    state.push_nil()
+                    return Ok(1)
+                    // return Err(fmt.format("[buffer_index] index 0 is out of range"))
+                }
+                name := buffer.get().name.slice()
+                index := int.clamp(if value < 0 {
+                    name.bytes.length + value + 1
+                } else {
+                    value
+                }, 1, name.bytes.length)
+                state.push_string(name[(index - 1) .. index])
+                Ok(1)
+            }
+            Err($err) -> Err(fmt.format("[buffer_index] index must be an int: {}", [&err]))
+        }
+
+        $value -> Err(fmt.format("[buffer_index] not a buffer: {}", [value]))
+    }
 }
 
 buffer_insert :: (state: &mut lua.State) -> Result[int, String] {
@@ -277,6 +319,8 @@ app :: () -> Result[(), lua.Error] {
     state.create_table(nrec = 5)
     state.push_function(user_data_index)
     state.set_field(-2, "__index")
+    state.push_function(buffer_index)
+    state.set_field(-2, "__custom_index")
     state.push_function(drop_buffer)
     state.set_field(-2, "__gc")
     state.push_function(buffer_insert)
@@ -285,7 +329,7 @@ app :: () -> Result[(), lua.Error] {
 
     try(state.do_file("./config/test.lua"))
 
-    try(state.call("main", 0))
+    try(state.pcall_global("main", 0))
 
     return Ok()
 }

@@ -9,5 +9,6 @@ if (-not (Test-Path $install_dir)) {
 
 Copy-Item "../libraries/GLFW/glfw/lib/glfw3.dll" $install_dir -Force
 Copy-Item "./fonts" $install_dir -Recurse -Force
+Copy-Item "./config" $install_dir -Recurse -Force
 Copy-Item "./icons/icon.ico" $install_dir -Force
 Copy-Item "./bin/chim.exe" $install_dir -Force
