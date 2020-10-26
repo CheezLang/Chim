@@ -1,0 +1,291 @@
+#lib("Dbghelp.lib")
+
+use import std.array
+use import std.rc
+use import std.string
+use import std.thread
+
+use import std.os.windows_types
+use import std.os.windows_functions
+use import std.os.windows_constants
+
+io  :: import std.io
+fmt :: import std.fmt
+C   :: import std.c
+
+use import lua
+lua :: import lua_cheez
+
+UserData :: enum {
+    None
+    Buff : Rc[Buffer]
+}
+
+MINIDUMP_TYPE :: enum #repr("C") {
+    MiniDumpNormal
+    MiniDumpWithDataSegs
+    MiniDumpWithFullMemory
+    MiniDumpWithHandleData
+    MiniDumpFilterMemory
+    MiniDumpScanMemory
+    MiniDumpWithUnloadedModules
+    MiniDumpWithIndirectlyReferencedMemory
+    MiniDumpFilterModulePaths
+    MiniDumpWithProcessThreadData
+    MiniDumpWithPrivateReadWriteMemory
+    MiniDumpWithoutOptionalData
+    MiniDumpWithFullMemoryInfo
+    MiniDumpWithThreadInfo
+    MiniDumpWithCodeSegs
+    MiniDumpWithoutAuxiliaryState
+    MiniDumpWithFullAuxiliaryState
+    MiniDumpWithPrivateWriteCopyMemory
+    MiniDumpIgnoreInaccessibleMemory
+    MiniDumpWithTokenInformation
+    MiniDumpWithModuleHeaders
+    MiniDumpFilterTriage
+    MiniDumpWithAvxXStateContext
+    MiniDumpWithIptTrace
+    MiniDumpScanInaccessiblePartialPages
+    MiniDumpValidTypeFlags
+}
+
+EXCEPTION_POINTERS :: struct {
+    _ := 0
+    // @todo
+//   PEXCEPTION_RECORD ExceptionRecord;
+//   PCONTEXT          ContextRecord;
+}
+
+MINIDUMP_EXCEPTION_INFORMATION :: struct {
+    ThreadId            : DWORD
+    ExceptionPointers   : ^EXCEPTION_POINTERS
+    ClientPointers      : BOOL
+}
+
+MINIDUMP_USER_STREAM :: struct {
+    Type        : ULONG32
+    BufferSize  : ULONG
+    Buffer      : ^void
+}
+
+MINIDUMP_USER_STREAM_INFORMATION :: struct {
+    UserStreamCount : ULONG
+    UserStreamArray : ^MINIDUMP_USER_STREAM
+}
+
+MINIDUMP_CALLBACK_INPUT :: struct {
+    _ := 0
+    // @todo
+}
+MINIDUMP_CALLBACK_OUTPUT :: struct {
+    _ := 0
+    // @todo
+}
+
+MINIDUMP_CALLBACK_ROUTINE :: fn(^void, ^MINIDUMP_CALLBACK_INPUT, ^MINIDUMP_CALLBACK_OUTPUT) -> BOOL #stdcall
+
+MINIDUMP_CALLBACK_INFORMATION :: struct {
+    CallbackRoutine : MINIDUMP_CALLBACK_ROUTINE
+    CallbackParam   : ^void
+}
+
+MiniDumpWriteDump :: (
+    hProcess        : HANDLE,
+    ProcessId       : DWORD,
+    hFile           : HANDLE,
+    DumpType        : MINIDUMP_TYPE,
+    ExceptionParam  : ^MINIDUMP_EXCEPTION_INFORMATION,
+    UserStreamParam : ^MINIDUMP_USER_STREAM_INFORMATION,
+    CallbackParam   : ^MINIDUMP_CALLBACK_INFORMATION
+) -> BOOL #stdcall;
+
+LPTOP_LEVEL_EXCEPTION_FILTER :: fn(^EXCEPTION_POINTERS) -> LONG #stdcall
+
+
+SetUnhandledExceptionFilter :: (lpTopLevelExceptionFilter: LPTOP_LEVEL_EXCEPTION_FILTER) -> LPTOP_LEVEL_EXCEPTION_FILTER #stdcall;
+
+exception_handler :: (exceptions: ^EXCEPTION_POINTERS) -> LONG #stdcall {
+    C.puts("exception")
+    write_dump("exception.dmp", exceptions)
+    return 0x1
+}
+
+write_dump :: (name: ^char8, exceptions: ^EXCEPTION_POINTERS = null) {
+    file := CreateFileA(name, GENERIC_WRITE, FILE_SHARE_WRITE, null, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, null)
+    if int(file) == -1 {
+        io.formatln("failed to open file")
+        return
+    }
+
+    exception_info := MINIDUMP_EXCEPTION_INFORMATION(
+        GetCurrentThreadId()
+        exceptions
+        0
+    )
+
+    process := GetCurrentProcess()
+    result := MiniDumpWriteDump(
+        process
+        GetProcessId(process)
+        file
+        .MiniDumpNormal
+        if exceptions != null then cast(^MINIDUMP_EXCEPTION_INFORMATION)^exception_info else cast(^MINIDUMP_EXCEPTION_INFORMATION)null
+        null, null
+    )
+    io.formatln("dump: {}", [result])
+
+    if CloseHandle(file) == 0 {
+        io.formatln("failed to close file")
+        return
+    }
+}
+
+Main :: () {
+    // prev := SetUnhandledExceptionFilter(exception_handler)
+    // io.formatln("prev exception handler: {}", [Function.to_pointer(prev)])
+
+    // write_dump("start.dmp")
+
+    match app() {
+        Ok() -> {
+            io.formatln("[Main] Ok")
+        }
+        Err($err) -> {
+            io.formatln("[Main] [ERROR] {}", [&err])
+        }
+    }
+}
+
+host_func :: (state: ^mut lua_State) -> i32 {
+    io.formatln("host_func")
+    // lua_pushstring(state, "uiaeuiaeuiaeuiaeuiae")
+    // lua_error(state)
+    return 0
+}
+
+BUFFER_METATABLE :: "__buffer_metatable"
+
+Buffer :: struct {
+    name : String
+}
+
+impl Buffer {
+    insert :: (&mut Self, line: int, column: int, text: string) {
+        io.formatln("Buffer.insert({}, {}, {})", [line, column, text])
+        self.name.append_string(text)
+    }
+}
+
+impl Drop for Buffer {
+    drop :: (&Self) {
+        io.formatln("Buffer.drop('{}')", [&name])
+    }
+}
+
+user_data_index :: (state: &mut lua.State) -> Result[int, String] {
+    // io.formatln("[user_data_index] user_data_index")
+    arg_count := state.get_top()
+    if arg_count != 2 {
+        return Err(fmt.format("[user_data_index] only accepts exactly 2 arguments"))
+    }
+
+    user_data := cast(^mut UserData) try_with(state.to_user_data(1), {
+        return Err(fmt.format("[user_data_index] not a userdata"))
+    })
+
+    // get metatable of user data
+    if !state.get_metatable(1) {
+        return Err(fmt.format("[user_data_index] no key found"))
+    }
+    // push key
+    state.push_value(2)
+    typ := lua.Type(lua_rawget(state.state, -2))
+    return match typ {
+        .Nil    -> Err(fmt.format("[user_data_index] no key found"))
+        _       -> Ok(1)
+    }
+}
+
+drop_buffer :: (state: &mut lua.State) -> Result[int, String] {
+    user_data := cast(^mut UserData) try_with(state.to_user_data(-1), {
+        return Err(fmt.format("[drop_buffer] not a userdata"))
+    })
+
+    return match &*user_data {
+        .Buff($buffer) -> {
+            buffer.drop()
+            *user_data = UserData.None
+            Ok(0)
+        }
+
+        _ -> Err(fmt.format("[drop_buffer] not a buffer"))
+    }
+}
+
+new_buffer :: (state: &mut lua.State) -> Result[int, String] {
+    name := try_with(state.to_string(-1), {
+        return Err(fmt.format("[new_buffer] Argument must be a string"))
+    })
+
+    mem := cast(^mut UserData) state.new_user_data_uv(@sizeof(UserData), 0)
+    *mem = UserData.Buff(Rc[Buffer].new(Buffer(name.to_owned())))
+
+    // set metatable
+    state.get_global(BUFFER_METATABLE)
+    state.set_metatable(-2)
+
+    return Ok(1)
+}
+
+buffer_insert :: (state: &mut lua.State) -> Result[int, String] {
+    arg_count := state.get_top()
+    if arg_count != 4 {
+        return Err(fmt.format("[buffer_insert] only accepts exactly 3(4) arguments"))
+    }
+
+    user_data := cast(^mut UserData) try_with(state.to_user_data(1), {
+        return Err(fmt.format("[buffer_insert] not a userdata"))
+    })
+
+    return match &*user_data {
+        .Buff($buffer) -> {
+            line := state.to_int(2).unwrap()
+            column := state.to_int(3).unwrap()
+            text := state.to_string(4).unwrap()
+            buffer.get_mut().insert(line, column, text)
+            Ok(0)
+        }
+
+        $value -> Err(fmt.format("[buffer_insert] not a buffer: {}", [value]))
+    }
+}
+
+app :: () -> Result[(), lua.Error] {
+    state := try(lua.State.new())
+    state.open_libs()
+
+    buff1 := Rc[Buffer].new(Buffer("buffer 1".to_owned()))
+
+    // lua_register(state.state, "host_func", host_func)
+    lua_pushcclosure(state.state, host_func, 0)
+    lua_setglobal(state.state, "host_func")
+
+    state.register("new_buffer", new_buffer)
+
+    // create metatable for buffer
+    state.create_table(nrec = 5)
+    state.push_function(user_data_index)
+    state.set_field(-2, "__index")
+    state.push_function(drop_buffer)
+    state.set_field(-2, "__gc")
+    state.push_function(buffer_insert)
+    state.set_field(-2, "insert")
+    state.set_global(BUFFER_METATABLE)
+
+    try(state.do_file("./config/test.lua"))
+
+    try(state.call("main", 0))
+
+    return Ok()
+}
