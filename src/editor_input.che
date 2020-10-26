@@ -302,12 +302,6 @@ impl SequenceParser {
     }
 }
 
-Argument :: enum #copy {
-    Char    : char
-    Move    : MoveCommand
-    // Command : CommandType
-}
-
 impl Parser for SequenceParser {
     state :: (&Self) -> ParserState {
         return self._state
@@ -477,6 +471,14 @@ impl Parser for SequenceParser {
             } else if name == "paste" {
                 CommandType.Edit(EditCommand.Paste)
             } else if name == "insert_char" {
+                arg := try(self.get_argument(0))
+                match arg {
+                    .Char($ch) -> CommandType.Edit(EditCommand.InsertChar(ch))
+                    $arg -> {
+                        return Err(fmt.format("Invalid argument to insert_char: {}", [arg]))
+                    }
+                }
+            } else if name == "insert" {
                 arg := try(self.get_argument(0))
                 match arg {
                     .Char($ch) -> CommandType.Edit(EditCommand.InsertChar(ch))

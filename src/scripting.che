@@ -1,12 +1,16 @@
 use import std.array
 use import std.rc
 use import std.string
+use import std.unicode
+use import std.map
 
 io  :: import std.io
 fmt :: import std.fmt
 
 use import lua
 lua :: import lua_cheez
+
+use import glfw_hl
 
 use import chim
 use import editor
@@ -52,6 +56,18 @@ impl ScriptingEngine {
         // state.set_field(-2, "insert")
         state.set_global(BUFFER_METATABLE)
 
+        // create chim functions
+        state.create_table()
+        state.push_function(lua_chim_command)
+        state.set_field(-2, "command")
+        state.push_function(lua_chim_map)
+        state.set_field(-2, "map")
+        state.set_global("chim")
+
+        // create table for callbacks
+        state.create_table()
+        state.set_global("__callbacks")
+
         return Ok(Rc[ScriptingEngine].new(ScriptingEngine(
             state   = state
         )))
@@ -63,6 +79,105 @@ impl ScriptingEngine {
     }
 }
 
+lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
+    arg_count := state.get_top()
+    if arg_count < 3 {
+        return Err(fmt.format("Missing arguments"))
+    }
+
+    // check if first arg is string
+    mode_name := try(state.to_string(1))
+    mode := if mode_name == "normal" {
+        Mode.Normal
+    } else if mode_name == "insert" {
+        Mode.Insert
+    } else if mode_name == "visual" {
+        Mode.Visual
+    } else if mode_name == "command" {
+        Mode.Command
+    } else {
+        return Err(fmt.format("Unknown mode '{}'", [mode_name]))
+    }
+
+    key_combo := try(state.to_string(2))
+
+    // parse key_combo
+    mut parsers := Array[Rc[Parser]].new()
+    for c in key_combo {
+        mut mods := GlfwMod.None
+        c := if c.is_upper() {
+            mods = mods or .Shift
+            c.to_lower()
+        } else c
+        parsers.add(KeyParser.new(.Char(c), mods))
+    }
+
+    match state.typ(3) {
+        .Function -> {
+            state.get_global("__callbacks")
+            state.push_value(-2)
+            ref := state.ref(-2)
+            state.pop(1) // pop __callbacks
+            io.formatln("mapping {}.{} to script function {}", [mode, key_combo, ref])
+        }
+
+        .String -> {
+            command := state.to_string(3).unwrap()
+            mut args := Array[String].new()
+            if arg_count > 3 {
+                for 4 ..= arg_count {
+                    match state.typ(it) {
+                        .String -> {
+                            args.add(state.to_string(it).unwrap().to_owned())
+                        }
+                        $typ -> {
+                            return Err(fmt.format("Invalid argument typ at index {}", [it_index]))
+                        }
+                    }
+                }
+            }
+
+            io.formatln("mapping {}.{} to {} ({})", [mode, key_combo, command, args[..]])
+
+            if !g_chim.parsers.contains(mode) {
+                g_chim.parsers.set(mode, Parsers())
+            }
+
+            g_chim.parsers[mode].normal.add(SequenceParser.new2(command.to_owned(), args, parsers[..]))
+        }
+
+        $typ -> {
+            return Err(fmt.format("3rd argument must be a function or a string but is '{}'", [typ]))
+        }
+    }
+
+    return Ok(0)
+}
+
+lua_chim_command :: (state: &mut lua.State) -> Result[int, String] {
+    arg_count := state.get_top()
+    if arg_count < 1 {
+        return Err(fmt.format("Missing arguments"))
+    }
+
+    // check if first arg is string
+    if state.typ(1) != .String {
+        return Err(fmt.format("First argument must be a string"))
+    }
+
+    command_name := try(state.to_string(1))
+    if command_name == "edit.insert" {
+        if arg_count < 2 {
+            return Err(fmt.format("Missing argument"))
+        }
+        arg := try(state.to_string(2))
+        g_chim.commands.push(Command(0, CommandType.Edit(EditCommand.InsertText(arg.to_owned()))))
+    } else {
+        return Err(fmt.format("Unknown command: '{}'", [command_name]))
+    }
+
+    return Ok(0)
+}
 
 /// args: self, key
 user_data_index :: (state: &mut lua.State) -> Result[int, String] {

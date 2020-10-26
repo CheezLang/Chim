@@ -17,6 +17,20 @@ use import clipboard
 
 #export_scope
 
+Argument :: enum #copy {
+    Char    : char
+    Move    : MoveCommand
+    // Command : CommandType
+}
+
+impl Clone for Argument {
+    clone :: (&Self) -> Argument {
+        return match self {
+            $arg -> *arg
+        }
+    }
+}
+
 MoveCommand :: enum #copy {
     Left, Right, Up, Down
     Home, End
@@ -36,12 +50,13 @@ MoveCommand :: enum #copy {
     GoBeforeCharBack    : char
 }
 
-EditCommand :: enum #copy {
+EditCommand :: enum {
     InsertTab
     IndentLine, DeindentLine
     Undo, Redo
     Copy, Paste
     InsertChar : char
+    InsertText : String
 }
 
 ViewCommand :: enum #copy {
@@ -55,6 +70,7 @@ CommandType :: enum {
     SwitchMode      : Mode
     ChangeFontSize  : f32
     ChangeFont      : String
+    Script          : (ref: int, args: Array[Argument])
     ExecuteCommand
     TabNext, TabPrev
     DeleteLeft, DeleteRight
@@ -68,6 +84,11 @@ impl Clone for CommandType {
     clone :: (&Self) -> CommandType {
         return match self {
             .ChangeFont($str) -> .ChangeFont(str.clone())
+            .Edit($edit) -> .Edit(match edit {
+                EditCommand.InsertText($str) -> EditCommand.InsertText(str.clone())
+                $cmd -> *cmd
+            })
+            .Script($script) -> .Script(script.ref, script.args.clone())
             $cmd -> *cmd
         }
     }
@@ -299,6 +320,11 @@ impl Chim {
                 .InsertChar($ch) -> {
                     view := self.active_view.clone()
                     view.get_mut().insert_char(ch)
+                }
+
+                .InsertText($text) -> {
+                    view := self.active_view.clone()
+                    view.get_mut().insert_string(text.slice())
                 }
 
                 $cmd -> {

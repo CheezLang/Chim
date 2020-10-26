@@ -80,27 +80,23 @@ Parsers :: struct {
     move    := Array[Rc[Parser]].new()
 }
 
+mut g_chim : ^mut Chim = null
+
 Chim :: struct {
-    slots           : []mut Slot
+    slots               : []mut Slot
     /// path of this executable
-    exe_path        := ".".to_owned()
+    exe_path            := ".".to_owned()
 
-    scripting_engine:= Rc[ScriptingEngine].empty()
+    scripting_engine    := Rc[ScriptingEngine].empty()
 
-    cursors         := Array[(col: int, row: int, typ: CursorType)].new()
-    commands        := RingQueue[Command].new()
-    last_move_command := Option[(count: int, command: MoveCommand)].None
+    cursors             := Array[(col: int, row: int, typ: CursorType)].new()
+    commands            := RingQueue[Command].new()
+    last_move_command   := Option[(count: int, command: MoveCommand)].None
 
-    key_events      := Array[KeyEvent].new(20)
+    key_events          := Array[KeyEvent].new(20)
 
     // normal_mode
-    parsers         := Map[Mode, Parsers].new()
-    // n_normal_parsers    := Array[Rc[Parser]].new()
-    // n_move_parsers      := Array[Rc[Parser]].new()
-    // i_normal_parsers    := Array[Rc[Parser]].new()
-    // i_move_parsers      := Array[Rc[Parser]].new()
-    // v_normal_parsers    := Array[Rc[Parser]].new()
-    // v_move_parsers      := Array[Rc[Parser]].new()
+    parsers             := Map[Mode, Parsers].new()
     current_parser      := Option[Rc[Parser]].None
 
     // editor stuff
@@ -180,14 +176,11 @@ impl Chim {
     }
 
     initialize :: (&mut Self, exe_path: String, args: []String) -> Result[(), String] {
+        g_chim = ^*self
+
         self.scripting_engine = try(ScriptingEngine.new())
 
-        config_path := fmt.format("{}/config/config.lua", [&exe_path])
-        io.formatln("[Chim] loading config file...")
-        self.scripting_engine.get_mut().load_file(config_path.slice())
-        io.formatln("[Chim] config file loaded")
-
-        self.exe_path = exe_path
+        self.exe_path = exe_path.clone()
         for row in 0 .. SLOTS_X {
             for col in 0 .. SLOTS_Y {
                 *self.slots[col + row * SLOTS_X] = Slot('´', .Comment, .Background)
@@ -366,6 +359,14 @@ impl Chim {
             self.register_command(.Command, "buffer.insert_char", ["' '"], [KeyParser.new(.Space, .Shift)])
             self.register_command(.Command, "buffer.insert_char", ["'`n'"], [KeyParser.new(.Enter, .Shift)])
         }
+
+        // config_path := fmt.format("{}/config/config.lua", [&exe_path])
+        config_path := fmt.format("./config/config.lua", [&exe_path])
+        io.formatln("[Chim] loading config file...")
+        try_with(self.scripting_engine.get_mut().load_file(config_path.slice()), {
+            io.formatln("[ERROR] Failed to load '{}': {}", [&config_path, &err])
+        })
+        io.formatln("[Chim] config file loaded")
 
         return Ok()
     }
