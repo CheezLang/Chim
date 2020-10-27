@@ -78,12 +78,13 @@ impl ScriptingEngine {
         return Ok()
     }
 
-    run_callback :: (&mut Self, ref: int, args: []Argument) -> Result[(), String] {
+    run_callback :: (&mut Self, count: int, ref: int, args: []Argument) -> Result[(), String] {
         state.get_global("__callbacks")
         defer state.pop(1)
         typ := lua.Type(lua_rawgeti(state.state, -1, ref))
         return match typ {
             .Function -> {
+                state.push_int(count)
                 for &arg in args {
                     match arg {
                         .Char($ch) -> {
@@ -100,7 +101,7 @@ impl ScriptingEngine {
                     }
                 }
 
-                try(state.call(args.length, Some(0)))
+                try(state.call(args.length + 1, Some(0)))
                 Ok()
             }
 
