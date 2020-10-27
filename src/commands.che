@@ -17,8 +17,9 @@ use import clipboard
 
 #export_scope
 
-Argument :: enum #copy {
+Argument :: enum {
     Char    : char
+    Str     : String
     Move    : MoveCommand
     // Command : CommandType
 }
@@ -26,6 +27,7 @@ Argument :: enum #copy {
 impl Clone for Argument {
     clone :: (&Self) -> Argument {
         return match self {
+            .Str($str) -> .Str(str.clone())
             $arg -> *arg
         }
     }
@@ -116,6 +118,12 @@ impl Chim {
     execute_command :: (&mut Self, count: int, command: CommandType) {
         count := if count == 0 then 1 else count
         match command {
+            .Script($script) -> {
+                try_with(self.scripting_engine.get_mut().run_callback(script.ref, script.args[..]), {
+                    io.formatln("[ERROR] execute script command: {}", [&err])
+                })
+            }
+
             .SwitchMode($mode) -> {
                 self.current_mode = mode
 

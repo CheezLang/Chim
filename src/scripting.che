@@ -77,6 +77,36 @@ impl ScriptingEngine {
         try(self.state.do_file(path))
         return Ok()
     }
+
+    run_callback :: (&mut Self, ref: int, args: []Argument) -> Result[(), String] {
+        state.get_global("__callbacks")
+        defer state.pop(1)
+        typ := lua.Type(lua_rawgeti(state.state, -1, ref))
+        return match typ {
+            .Function -> {
+                for &arg in args {
+                    match arg {
+                        .Char($ch) -> {
+                            state.push_char(*ch)
+                        }
+
+                        .Str($str) -> {
+                            state.push_string(str.slice())
+                        }
+
+                        $arg -> {
+                            return Err(fmt.format("Argument {} not implemented yet", [arg]))
+                        }
+                    }
+                }
+
+                try(state.call(args.length, Some(0)))
+                Ok()
+            }
+
+            $typ -> Err(fmt.format("Callback {} is not a function but {}", [ref, typ]))
+        }
+    }
 }
 
 lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
@@ -119,16 +149,22 @@ lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
             ref := state.ref(-2)
             state.pop(1) // pop __callbacks
             io.formatln("mapping {}.{} to script function {}", [mode, key_combo, ref])
+
+            if !g_chim.parsers.contains(mode) {
+                g_chim.parsers.set(mode, Parsers())
+            }
+
+            g_chim.parsers[mode].normal.add(SequenceParser.new(.Script(ref), [], parsers[..]))
         }
 
         .String -> {
             command := state.to_string(3).unwrap()
-            mut args := Array[String].new()
+            mut args := Array[Argument].new()
             if arg_count > 3 {
                 for 4 ..= arg_count {
                     match state.typ(it) {
                         .String -> {
-                            args.add(state.to_string(it).unwrap().to_owned())
+                            args.add(Argument.Str(state.to_string(it).unwrap().to_owned()))
                         }
                         $typ -> {
                             return Err(fmt.format("Invalid argument typ at index {}", [it_index]))
@@ -143,7 +179,7 @@ lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
                 g_chim.parsers.set(mode, Parsers())
             }
 
-            g_chim.parsers[mode].normal.add(SequenceParser.new2(command.to_owned(), args, parsers[..]))
+            g_chim.parsers[mode].normal.add(SequenceParser.new2(.BuiltIn(command.to_owned()), args, parsers[..]))
         }
 
         $typ -> {

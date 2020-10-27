@@ -241,10 +241,10 @@ impl Chim {
             self.register_move_command(.Normal, "move.select_page_down", [], [KeyParser.new(.PageDown, .Shift)])
             self.register_move_command(.Normal, "move.goto_line_absolute", [], [KeyParser.new(.Char('g')), KeyParser.new(.Char('l'))])
             self.register_move_command(.Normal, "move.goto_line_relative_top", [], [KeyParser.new(.Char('g')), KeyParser.new(.Char('t'))])
-            self.register_move_command(.Normal, "move.goto_char", ["arg"], [KeyParser.new(.Char('f')), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.goto_char_back", ["arg"], [KeyParser.new(.Char('f'), .Shift), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.go_before_char", ["arg"], [KeyParser.new(.Char('t')), CharParser.new("arg")])
-            self.register_move_command(.Normal, "move.go_before_char_back", ["arg"], [KeyParser.new(.Char('t'), .Shift), CharParser.new("arg")])
+            self.register_move_command(.Normal, "move.goto_char", [], [KeyParser.new(.Char('f')), CharParser.new()])
+            self.register_move_command(.Normal, "move.goto_char_back", [], [KeyParser.new(.Char('f'), .Shift), CharParser.new()])
+            self.register_move_command(.Normal, "move.go_before_char", [], [KeyParser.new(.Char('t')), CharParser.new()])
+            self.register_move_command(.Normal, "move.go_before_char_back", [], [KeyParser.new(.Char('t'), .Shift), CharParser.new()])
             self.register_move_command(.Normal, "move.repeat", [], [KeyParser.new(.Char(','))])
             self.register_move_command(.Normal, "move.repeat_inv", [], [KeyParser.new(.Char(';'))])
 
@@ -314,9 +314,9 @@ impl Chim {
             self.register_command(.Insert, "buffer.redo", [], [KeyParser.new(.Char('y'), .Control)])
             self.register_command(.Insert, "buffer.copy", [], [KeyParser.new(.Char('c'), .Control)])
             self.register_command(.Insert, "buffer.paste", [], [KeyParser.new(.Char('v'), .Control)])
-            self.register_command(.Insert, "buffer.insert_char", ["ch"], [CharParser.new("ch")])
-            self.register_command(.Insert, "buffer.insert_char", ["' '"], [KeyParser.new(.Space, .Shift)])
-            self.register_command(.Insert, "buffer.insert_char", ["'`n'"], [KeyParser.new(.Enter)])
+            self.register_command(.Insert, "buffer.insert_char", [], [CharParser.new()])
+            self.register_command(.Insert, "buffer.insert_char", [Argument.Char(' ')], [KeyParser.new(.Space, .Shift)])
+            self.register_command(.Insert, "buffer.insert_char", [Argument.Char('`n')], [KeyParser.new(.Enter)])
 
             // view commands
             self.register_command(.Insert, "view.add_cursor_above", [], [KeyParser.new(.Up, .Shift or .Alt)])
@@ -355,9 +355,9 @@ impl Chim {
             self.register_command(.Command, "buffer.redo", [], [KeyParser.new(.Char('y'), .Control)])
             self.register_command(.Command, "buffer.copy", [], [KeyParser.new(.Char('c'), .Control)])
             self.register_command(.Command, "buffer.paste", [], [KeyParser.new(.Char('v'), .Control)])
-            self.register_command(.Command, "buffer.insert_char", ["ch"], [CharParser.new("ch")])
-            self.register_command(.Command, "buffer.insert_char", ["' '"], [KeyParser.new(.Space, .Shift)])
-            self.register_command(.Command, "buffer.insert_char", ["'`n'"], [KeyParser.new(.Enter, .Shift)])
+            self.register_command(.Command, "buffer.insert_char", [], [CharParser.new()])
+            self.register_command(.Command, "buffer.insert_char", [Argument.Char(' ')], [KeyParser.new(.Space, .Shift)])
+            self.register_command(.Command, "buffer.insert_char", [Argument.Char('`n')], [KeyParser.new(.Enter, .Shift)])
         }
 
         // config_path := fmt.format("{}/config/config.lua", [&exe_path])
@@ -371,20 +371,20 @@ impl Chim {
         return Ok()
     }
 
-    register_command :: (&mut Self, mode: Mode, command: string, args: []string, steps: []Rc[Parser]) {
+    register_command :: (&mut Self, mode: Mode, command: string, args: []Argument, steps: []Rc[Parser]) {
         if !self.parsers.contains(mode) {
             self.parsers.set(mode, Parsers())
         }
 
-        self.parsers[mode].normal.add(SequenceParser.new(command, args, steps))
+        self.parsers[mode].normal.add(SequenceParser.new(.BuiltIn(command.to_owned()), args, steps))
     }
 
-    register_move_command :: (&mut Self, mode: Mode, command: string, args: []string, steps: []Rc[Parser]) {
+    register_move_command :: (&mut Self, mode: Mode, command: string, args: []Argument, steps: []Rc[Parser]) {
         if !self.parsers.contains(mode) {
             self.parsers.set(mode, Parsers())
         }
 
-        self.parsers[mode].move.add(SequenceParser.new(command, args, steps))
+        self.parsers[mode].move.add(SequenceParser.new(.BuiltIn(command.to_owned()), args, steps))
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {

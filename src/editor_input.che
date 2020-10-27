@@ -102,19 +102,18 @@ Parser :: trait {
     advance         :: (&mut Self, event: KeyEvent);
     clone           :: (&Self) -> Rc[Parser];
     build_command   :: (&Self) -> Result[Command, String];
-    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]);
+    get_values      :: (&Self, chars: &mut Array[Argument]);
     accepts_numbers :: (&Self) -> bool;
 }
 
 CharParser :: struct {
     _state      : ParserState
-    name        : String
     character   := '`0'
 }
 
 impl CharParser {
-    new :: (name: string) -> Rc[Parser] {
-        return Rc[Parser].new(CharParser(.InProgress, name.to_owned()))
+    new :: () -> Rc[Parser] {
+        return Rc[Parser].new(CharParser(.InProgress))
     }
 }
 
@@ -131,27 +130,27 @@ impl Parser for CharParser {
         return Err(fmt.format("No command specified"))
     }
 
-    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
+    get_values :: (&Self, args: &mut Array[Argument]) {
         match self._state {
             .Success -> {
-                chars.set(self.name.slice(), self.character)
+                args.add(Argument.Char(self.character))
             }
             _ -> {}
         }
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
-        return Self.new(self.name.slice())
+        return Self.new()
     }
 
     advance :: (&mut Self, event: KeyEvent) {
-        parser_log("CharParser['{}'].advance({})", [self.name.slice(), event])
+        parser_log("CharParser['{}'].advance({})", [event])
 
         match self._state {
             .InProgress -> {
                 match event.typ {
                     .Char($ch) -> {
-                        parser_log("CharParser['{}'].advance({}).InProgress '{}'", [self.name.slice(), event, ch])
+                        parser_log("CharParser['{}'].advance({}).InProgress '{}'", [event, ch])
                         if event.mods == .Shift {
                             self.character = ch.to_upper()
                             self._state = .Success
@@ -215,7 +214,7 @@ impl Parser for KeyParser {
         return Err(fmt.format("No command specified"))
     }
 
-    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
+    get_values :: (&Self, chars: &mut Array[Argument]) {
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
@@ -250,26 +249,36 @@ impl Parser for KeyParser {
     }
 }
 
+CommandKind :: enum {
+    BuiltIn : String
+    Script  : int
+}
+
+impl Clone for CommandKind {
+    clone :: (&Self) -> CommandKind {
+        return match self {
+            .BuiltIn($str) -> .BuiltIn(str.clone())
+            $arg -> *arg
+        }
+    }
+}
+
 SequenceParser :: struct {
-    command : String
-    args    : Array[String]
+    command : CommandKind
+    args    : Array[Argument]
 
     count   : int
 
     parsers : Array[Rc[Parser]]
     current : int
     _state  : ParserState
-
-    char_variables      := Map[string, char].new()
-    move_variables      := Map[string, MoveCommand].new()
-    command_variables   := Map[string, Command].new()
 }
 
 impl SequenceParser {
-    new :: (command: string, arguments: []string, parsers: []Rc[Parser]) -> Rc[Parser] {
-        mut args := Array[String].new()
+    new :: (command: CommandKind, arguments: []Argument, parsers: []Rc[Parser]) -> Rc[Parser] {
+        mut args := Array[Argument].new()
         for arg in arguments {
-            args.add(arg.to_owned())
+            args.add(arg.clone())
         }
 
         mut new_parsers := Array[Rc[Parser]].new(parsers.length)
@@ -277,7 +286,7 @@ impl SequenceParser {
             new_parsers.add(p.get().clone())
         }
         return Rc[Parser].new(SequenceParser(
-            command = command.to_owned()
+            command = command
             args    = args
             count   = 0
             parsers = new_parsers
@@ -286,7 +295,7 @@ impl SequenceParser {
         ))
     }
 
-    new2 :: (command: String, args: Array[String], parsers: []Rc[Parser]) -> Rc[Parser] {
+    new2 :: (command: CommandKind, args: Array[Argument], parsers: []Rc[Parser]) -> Rc[Parser] {
         mut new_parsers := Array[Rc[Parser]].new(parsers.length)
         for &p in parsers {
             new_parsers.add(p.get().clone())
@@ -321,192 +330,204 @@ impl Parser for SequenceParser {
         }
 
         for &parser in self.parsers[..] {
-            parser.get().store_variables(&mut self.char_variables, &mut self.move_variables, &mut self.command_variables)
+            parser.get().get_values(&mut self.args)
         }
 
-        command := self.command.slice()
-
-        if command.starts_with("move.") {
-            name := command[5..]
-            typ := if name == "repeat" {
-                CommandType.RepeatLastMove
-            } else if name == "repeat_inv" {
-                CommandType.RepeatLastMoveInv
-            } else if name == "left" {
-                CommandType.Move(MoveCommand.Left)
-            } else if name == "right" {
-                CommandType.Move(MoveCommand.Right)
-            } else if name == "up" {
-                CommandType.Move(MoveCommand.Up)
-            } else if name == "down" {
-                CommandType.Move(MoveCommand.Down)
-            } else if name == "line_home" {
-                CommandType.Move(MoveCommand.Home)
-            } else if name == "line_end" {
-                CommandType.Move(MoveCommand.End)
-            } else if name == "buffer_home" {
-                CommandType.Move(MoveCommand.BufferHome)
-            } else if name == "buffer_end" {
-                CommandType.Move(MoveCommand.BufferEnd)
-            } else if name == "page_up" {
-                CommandType.Move(MoveCommand.PageUp)
-            } else if name == "page_down" {
-                CommandType.Move(MoveCommand.PageDown)
-            } else if name == "select_left" {
-                CommandType.Move(MoveCommand.SelectLeft)
-            } else if name == "select_right" {
-                CommandType.Move(MoveCommand.SelectRight)
-            } else if name == "select_up" {
-                CommandType.Move(MoveCommand.SelectUp)
-            } else if name == "select_down" {
-                CommandType.Move(MoveCommand.SelectDown)
-            } else if name == "select_line_home" {
-                CommandType.Move(MoveCommand.SelectHome)
-            } else if name == "select_line_end" {
-                CommandType.Move(MoveCommand.SelectEnd)
-            } else if name == "select_buffer_home" {
-                CommandType.Move(MoveCommand.SelectBufferHome)
-            } else if name == "select_buffer_end" {
-                CommandType.Move(MoveCommand.SelectBufferEnd)
-            } else if name == "select_page_up" {
-                CommandType.Move(MoveCommand.SelectPageUp)
-            } else if name == "select_page_down" {
-                CommandType.Move(MoveCommand.SelectPageDown)
-            } else if name == "goto_line_absolute" {
-                CommandType.Move(MoveCommand.GoToLineAbsolute)
-            } else if name == "goto_line_relative_top" {
-                CommandType.Move(MoveCommand.GoToLineRelativeTop)
-            } else if name == "goto_char" {
-                if self.args.count() != 1 {
-                    return Err(fmt.format("Move command 'goto_char' requires one argument"))
-                }
-                match self.char_variables.get(self.args[0].slice()) {
-                    Some($ch) -> CommandType.Move(MoveCommand.GoToChar(*ch))
-
-                    None -> {
-                        return Err(fmt.format("No binding '{}' in goto_char", [self.args[0].slice()]))
-                    }
-                }
-            } else if name == "go_before_char" {
-                if self.args.count() != 1 {
-                    return Err(fmt.format("Move command 'go_before_char' requires one argument"))
-                }
-                match self.char_variables.get(self.args[0].slice()) {
-                    Some($ch) -> CommandType.Move(MoveCommand.GoBeforeChar(*ch))
-
-                    None -> {
-                        return Err(fmt.format("No binding '{}' in go_before_char", [self.args[0].slice()]))
-                    }
-                }
-            } else if name == "goto_char_back" {
-                if self.args.count() != 1 {
-                    return Err(fmt.format("Move command 'goto_char_back' requires one argument"))
-                }
-                match self.char_variables.get(self.args[0].slice()) {
-                    Some($ch) -> CommandType.Move(MoveCommand.GoToCharBack(*ch))
-
-                    None -> {
-                        return Err(fmt.format("No binding '{}' in goto_char_back", [self.args[0].slice()]))
-                    }
-                }
-            } else if name == "go_before_char_back" {
-                if self.args.count() != 1 {
-                    return Err(fmt.format("Move command 'go_before_char_back' requires one argument"))
-                }
-                match self.char_variables.get(self.args[0].slice()) {
-                    Some($ch) -> CommandType.Move(MoveCommand.GoBeforeCharBack(*ch))
-
-                    None -> {
-                        return Err(fmt.format("No binding '{}' in go_before_char_back", [self.args[0].slice()]))
-                    }
-                }
-            } else {
-                return Err(fmt.format("Unknown move command: '{}'", [command]))
+        match &self.command {
+            .Script($ref) -> {
+                return Ok(Command(self.count, .Script(*ref, self.args.clone())))
             }
 
-            return Ok(Command(self.count, typ))
-        } else if command.starts_with("editor.") {
-            name := command[7..]
+            .BuiltIn($name) -> {
+                command := name.slice()
 
-            typ := if name == "tab_next" {
-                CommandType.TabNext
-            } else if name == "tab_prev" {
-                CommandType.TabPrev
-            } else if name == "mode_insert" {
-                CommandType.SwitchMode(Mode.Insert)
-            } else if name == "mode_normal" {
-                CommandType.SwitchMode(Mode.Normal)
-            } else if name == "mode_command" {
-                CommandType.SwitchMode(Mode.Command)
-            } else if name == "execute_command" {
-                CommandType.ExecuteCommand
-            } else if name == "buffer_save" {
-                CommandType.BufferSave
-            } else {
-                return Err(fmt.format("Unknown editor command: '{}'", [command]))
-            }
-
-            return Ok(Command(self.count, typ))
-        } else if command.starts_with("buffer.") {
-            name := command[7..]
-
-            typ := if name == "delete_line" {
-                CommandType.DeleteLine
-            } else if name == "delete_left" {
-                CommandType.DeleteLeft
-            } else if name == "delete_right" {
-                CommandType.DeleteRight
-            } else if name == "insert_tab" {
-                CommandType.Edit(EditCommand.InsertTab)
-            } else if name == "indent_line" {
-                CommandType.Edit(EditCommand.IndentLine)
-            } else if name == "deindent_line" {
-                CommandType.Edit(EditCommand.DeindentLine)
-            } else if name == "undo" {
-                CommandType.Edit(EditCommand.Undo)
-            } else if name == "redo" {
-                CommandType.Edit(EditCommand.Redo)
-            } else if name == "copy" {
-                CommandType.Edit(EditCommand.Copy)
-            } else if name == "paste" {
-                CommandType.Edit(EditCommand.Paste)
-            } else if name == "insert_char" {
-                arg := try(self.get_argument(0))
-                match arg {
-                    .Char($ch) -> CommandType.Edit(EditCommand.InsertChar(ch))
-                    $arg -> {
-                        return Err(fmt.format("Invalid argument to insert_char: {}", [arg]))
+                if command.starts_with("move.") {
+                    name := command[5..]
+                    typ := if name == "repeat" {
+                        CommandType.RepeatLastMove
+                    } else if name == "repeat_inv" {
+                        CommandType.RepeatLastMoveInv
+                    } else if name == "left" {
+                        CommandType.Move(MoveCommand.Left)
+                    } else if name == "right" {
+                        CommandType.Move(MoveCommand.Right)
+                    } else if name == "up" {
+                        CommandType.Move(MoveCommand.Up)
+                    } else if name == "down" {
+                        CommandType.Move(MoveCommand.Down)
+                    } else if name == "line_home" {
+                        CommandType.Move(MoveCommand.Home)
+                    } else if name == "line_end" {
+                        CommandType.Move(MoveCommand.End)
+                    } else if name == "buffer_home" {
+                        CommandType.Move(MoveCommand.BufferHome)
+                    } else if name == "buffer_end" {
+                        CommandType.Move(MoveCommand.BufferEnd)
+                    } else if name == "page_up" {
+                        CommandType.Move(MoveCommand.PageUp)
+                    } else if name == "page_down" {
+                        CommandType.Move(MoveCommand.PageDown)
+                    } else if name == "select_left" {
+                        CommandType.Move(MoveCommand.SelectLeft)
+                    } else if name == "select_right" {
+                        CommandType.Move(MoveCommand.SelectRight)
+                    } else if name == "select_up" {
+                        CommandType.Move(MoveCommand.SelectUp)
+                    } else if name == "select_down" {
+                        CommandType.Move(MoveCommand.SelectDown)
+                    } else if name == "select_line_home" {
+                        CommandType.Move(MoveCommand.SelectHome)
+                    } else if name == "select_line_end" {
+                        CommandType.Move(MoveCommand.SelectEnd)
+                    } else if name == "select_buffer_home" {
+                        CommandType.Move(MoveCommand.SelectBufferHome)
+                    } else if name == "select_buffer_end" {
+                        CommandType.Move(MoveCommand.SelectBufferEnd)
+                    } else if name == "select_page_up" {
+                        CommandType.Move(MoveCommand.SelectPageUp)
+                    } else if name == "select_page_down" {
+                        CommandType.Move(MoveCommand.SelectPageDown)
+                    } else if name == "goto_line_absolute" {
+                        CommandType.Move(MoveCommand.GoToLineAbsolute)
+                    } else if name == "goto_line_relative_top" {
+                        CommandType.Move(MoveCommand.GoToLineRelativeTop)
+                    } else if name == "goto_char" {
+                        match self.get_argument(0) {
+                            .Ok(Argument.Char($ch)) -> CommandType.Move(MoveCommand.GoToChar(ch))
+                            .Ok($arg) -> {
+                                return Err(fmt.format("[goto_char] Wrong argument type: {}", [&arg]))
+                            }
+                            .Err($err) -> {
+                                return Err(fmt.format("[goto_char] {}", [&err]))
+                            }
+                        }
+                    } else if name == "go_before_char" {
+                        match self.get_argument(0) {
+                            .Ok(Argument.Char($ch)) -> CommandType.Move(MoveCommand.GoBeforeChar(ch))
+                            .Ok($arg) -> {
+                                return Err(fmt.format("[go_before_char] Wrong argument type: {}", [&arg]))
+                            }
+                            .Err($err) -> {
+                                return Err(fmt.format("[go_before_char] {}", [&err]))
+                            }
+                        }
+                    } else if name == "goto_char_back" {
+                        match self.get_argument(0) {
+                            .Ok(Argument.Char($ch)) -> CommandType.Move(MoveCommand.GoToCharBack(ch))
+                            .Ok($arg) -> {
+                                return Err(fmt.format("[goto_char_back] Wrong argument type: {}", [&arg]))
+                            }
+                            .Err($err) -> {
+                                return Err(fmt.format("[goto_char_back] {}", [&err]))
+                            }
+                        }
+                    } else if name == "go_before_char_back" {
+                        match self.get_argument(0) {
+                            .Ok(Argument.Char($ch)) -> CommandType.Move(MoveCommand.GoBeforeCharBack(ch))
+                            .Ok($arg) -> {
+                                return Err(fmt.format("[go_before_char_back] Wrong argument type: {}", [&arg]))
+                            }
+                            .Err($err) -> {
+                                return Err(fmt.format("[go_before_char_back] {}", [&err]))
+                            }
+                        }
+                    } else {
+                        return Err(fmt.format("Unknown move command: '{}'", [command]))
                     }
-                }
-            } else if name == "insert" {
-                arg := try(self.get_argument(0))
-                match arg {
-                    .Char($ch) -> CommandType.Edit(EditCommand.InsertChar(ch))
-                    $arg -> {
-                        return Err(fmt.format("Invalid argument to insert_char: {}", [arg]))
+
+                    return Ok(Command(self.count, typ))
+                } else if command.starts_with("editor.") {
+                    name := command[7..]
+
+                    typ := if name == "tab_next" {
+                        CommandType.TabNext
+                    } else if name == "tab_prev" {
+                        CommandType.TabPrev
+                    } else if name == "mode_insert" {
+                        CommandType.SwitchMode(Mode.Insert)
+                    } else if name == "mode_normal" {
+                        CommandType.SwitchMode(Mode.Normal)
+                    } else if name == "mode_command" {
+                        CommandType.SwitchMode(Mode.Command)
+                    } else if name == "execute_command" {
+                        CommandType.ExecuteCommand
+                    } else if name == "buffer_save" {
+                        CommandType.BufferSave
+                    } else {
+                        return Err(fmt.format("Unknown editor command: '{}'", [command]))
                     }
+
+                    return Ok(Command(self.count, typ))
+                } else if command.starts_with("buffer.") {
+                    name := command[7..]
+
+                    typ := if name == "delete_line" {
+                        CommandType.DeleteLine
+                    } else if name == "delete_left" {
+                        CommandType.DeleteLeft
+                    } else if name == "delete_right" {
+                        CommandType.DeleteRight
+                    } else if name == "insert_tab" {
+                        CommandType.Edit(EditCommand.InsertTab)
+                    } else if name == "indent_line" {
+                        CommandType.Edit(EditCommand.IndentLine)
+                    } else if name == "deindent_line" {
+                        CommandType.Edit(EditCommand.DeindentLine)
+                    } else if name == "undo" {
+                        CommandType.Edit(EditCommand.Undo)
+                    } else if name == "redo" {
+                        CommandType.Edit(EditCommand.Redo)
+                    } else if name == "copy" {
+                        CommandType.Edit(EditCommand.Copy)
+                    } else if name == "paste" {
+                        CommandType.Edit(EditCommand.Paste)
+                    } else if name == "insert_char" {
+                        match self.get_argument(0) {
+                            .Ok(Argument.Char($ch)) -> CommandType.Edit(EditCommand.InsertChar(ch))
+                            .Ok($arg) -> {
+                                return Err(fmt.format("[insert_char] Wrong argument type: {}", [&arg]))
+                            }
+                            .Err($err) -> {
+                                return Err(fmt.format("[insert_char] {}", [&err]))
+                            }
+                        }
+                    } else if name == "insert" {
+                        match self.get_argument(0) {
+                            .Ok(Argument.Str($str)) -> CommandType.Edit(EditCommand.InsertText(str))
+                            .Ok($arg) -> {
+                                return Err(fmt.format("[insert] Wrong argument type: {}", [&arg]))
+                            }
+                            .Err($err) -> {
+                                return Err(fmt.format("[insert] {}", [&err]))
+                            }
+                        }
+                    } else {
+                        return Err(fmt.format("Unknown view command: '{}'", [command]))
+                    }
+
+                    return Ok(Command(self.count, typ))
+
+                } else if command.starts_with("view.") {
+                    name := command[5..]
+
+                    typ := if name == "add_cursor_above" {
+                        CommandType.View(ViewCommand.AddCursorAbove)
+                    } else if name == "add_cursor_below" {
+                        CommandType.View(ViewCommand.AddCursorBelow)
+                    } else {
+                        return Err(fmt.format("Unknown view command: '{}'", [command]))
+                    }
+
+                    return Ok(Command(self.count, typ))
+                } else {
+                    return Err(fmt.format("Unknown command: '{}'", [command]))
                 }
-            } else {
-                return Err(fmt.format("Unknown view command: '{}'", [command]))
             }
 
-            return Ok(Command(self.count, typ))
-
-        } else if command.starts_with("view.") {
-            name := command[5..]
-
-            typ := if name == "add_cursor_above" {
-                CommandType.View(ViewCommand.AddCursorAbove)
-            } else if name == "add_cursor_below" {
-                CommandType.View(ViewCommand.AddCursorBelow)
-            } else {
-                return Err(fmt.format("Unknown view command: '{}'", [command]))
-            }
-
-            return Ok(Command(self.count, typ))
-        } else {
-            return Err(fmt.format("Unknown command: '{}'", [command]))
+            _ -> @assert(false)
         }
+        @assert(false)
+        return Err(fmt.format(""))
     }
 
     get_argument :: (&Self, index: int) -> Result[Argument, String] {
@@ -514,26 +535,10 @@ impl Parser for SequenceParser {
             return Err(fmt.format("No argument at index {}", [index]))
         }
 
-        arg := self.args[index].slice()
-
-        return if arg.starts_with("'") and arg.ends_with("'") {
-            str := arg[1 .. (arg.bytes.length - 1)]
-
-            ch, len := Utf8.decode(str.bytes)
-            if len > 0 and int(len) == str.bytes.length {
-                Ok(Argument.Char(ch))
-            } else {
-                Err(fmt.format("Exactly one character must be between ' and '"))
-            }
-        } else {
-            match self.char_variables.get(arg) {
-                Some($ch) -> Ok(Argument.Char(*ch))
-                None -> Err(fmt.format("No char variable with name '{}' found", [arg]))
-            }
-        }
+        return Ok(self.args[index].clone())
     }
 
-    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
+    get_values :: (&Self, chars: &mut Array[Argument]) {
     }
 
     advance :: (&mut Self, event: KeyEvent) {
@@ -646,7 +651,7 @@ impl Parser for NormalParser {
         return self.final_parser.unwrap_ref().get().build_command()
     }
 
-    store_variables :: (&Self, chars: &mut Map[string, char], moves: &mut Map[string, MoveCommand], commands: &mut Map[string, Command]) {
+    get_values :: (&Self, chars: &mut Array[Argument]) {
     }
 
     advance :: (&mut Self, event: KeyEvent) {
