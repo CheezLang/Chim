@@ -132,14 +132,122 @@ lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
     key_combo := try(state.to_string(2))
 
     // parse key_combo
+    ParseState :: enum #copy {
+        Normal
+        Escaped
+    }
+    mut parse_state := ParseState.Normal
     mut parsers := Array[Rc[Parser]].new()
+    mut escape_start := -1
     for c in key_combo {
-        mut mods := GlfwMod.None
-        c := if c.is_upper() {
-            mods = mods or .Shift
-            c.to_lower()
-        } else c
-        parsers.add(KeyParser.new(.Char(c), mods))
+        match parse_state {
+            .Normal -> {
+                if c == '{' {
+                    if byte_index + 1 >= key_combo.bytes.length {
+                        return Err(fmt.format("Invalid key combo: '{}'", [key_combo]))
+                    }
+                    parse_state = .Escaped
+                    escape_start = byte_index + 1
+                } else {
+                    mut mods := GlfwMod.None
+                    c := if c.is_upper() {
+                        mods = mods or .Shift
+                        c.to_lower()
+                    } else c
+                    parsers.add(KeyParser.new(.Char(c), mods))
+                }
+            }
+
+            .Escaped -> {
+                if c == '{' {
+                    parsers.add(KeyParser.new(.Char(c), .None))
+                    parse_state = .Normal
+                    escape_start = -1
+                } else if c == '}' {
+                    escape_sequence := key_combo[escape_start .. byte_index]
+
+                    parts := escape_sequence.split_at_char(' ', true).to_array()
+
+                    modstr, keystr := if parts.count() == 1 {
+                        "", parts[0].slice()
+                    } else {
+                        parts[0].slice(), parts[1].slice()
+                    }
+
+                    mut mods := GlfwMod.None
+                    for c in modstr {
+                        match c {
+                            'C' -> {
+                                if GlfwMod.Control is in mods {
+                                    return Err(fmt.format("Duplicate modifier Control"))
+                                }
+                                mods = mods or .Control
+                            }
+                            'S' -> {
+                                if GlfwMod.Shift is in mods {
+                                    return Err(fmt.format("Duplicate modifier Shift"))
+                                }
+                                mods = mods or .Shift
+                            }
+                            'A' -> {
+                                if GlfwMod.Alt is in mods {
+                                    return Err(fmt.format("Duplicate modifier Alt"))
+                                }
+                                mods = mods or .Alt
+                            }
+                            $ch -> {
+                                return Err(fmt.format("Unknown modifier '{}'", [ch]))
+                            }
+                        }
+                    }
+
+                    parser : Rc[Parser] = if keystr == "Space" {
+                        KeyParser.new(.Space, mods)
+                    } else if keystr == "Enter" {
+                        KeyParser.new(.Enter, mods)
+                    } else if keystr == "Backspace" {
+                        KeyParser.new(.Backspace, mods)
+                    } else if keystr == "Delete" {
+                        KeyParser.new(.Delete, mods)
+                    } else if keystr == "Tab" {
+                        KeyParser.new(.Tab, mods)
+                    } else if keystr == "Escape" {
+                        KeyParser.new(.Escape, mods)
+                    } else if keystr == "Home" {
+                        KeyParser.new(.Home, mods)
+                    } else if keystr == "End" {
+                        KeyParser.new(.End, mods)
+                    } else if keystr == "PageUp" {
+                        KeyParser.new(.PageUp, mods)
+                    } else if keystr == "PageDown" {
+                        KeyParser.new(.PageDown, mods)
+                    } else if keystr == "Up" {
+                        KeyParser.new(.Up, mods)
+                    } else if keystr == "Down" {
+                        KeyParser.new(.Down, mods)
+                    } else if keystr == "Left" {
+                        KeyParser.new(.Left, mods)
+                    } else if keystr == "Right" {
+                        KeyParser.new(.Right, mods)
+                    } else {
+                        if mods == .None and keystr == "char" {
+                            CharParser.new()
+                        } else {
+                            ch, len := Utf8.decode(keystr.bytes)
+                            if int(len) != keystr.bytes.length {
+                                return Err(fmt.format("Unknown control sequence '{}'", [keystr]))
+                            }
+                            KeyParser.new(.Char(ch), mods)
+                        }
+                    }
+
+                    // io.formatln("escape_sequence: '{}', {}, {}", [escape_sequence, mods, key])
+                    parsers.add(parser)
+                    parse_state = .Normal
+                    escape_start = -1
+                }
+            }
+        }
     }
 
     match state.typ(3) {

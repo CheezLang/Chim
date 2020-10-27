@@ -144,13 +144,13 @@ impl Parser for CharParser {
     }
 
     advance :: (&mut Self, event: KeyEvent) {
-        parser_log("CharParser['{}'].advance({})", [event])
+        parser_log("CharParser[].advance({})", [event])
 
         match self._state {
             .InProgress -> {
                 match event.typ {
                     .Char($ch) -> {
-                        parser_log("CharParser['{}'].advance({}).InProgress '{}'", [event, ch])
+                        parser_log("CharParser[].advance({}).InProgress '{}'", [event, ch])
                         if event.mods == .Shift {
                             self.character = ch.to_upper()
                             self._state = .Success
@@ -772,7 +772,8 @@ impl Chim {
                 }
 
                 None -> {
-                    @assert(false)
+                    io.formatln("No keybindings for mode '{}' specified", [current_mode])
+                    return
                 }
             }
         }
