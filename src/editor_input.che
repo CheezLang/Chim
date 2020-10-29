@@ -849,6 +849,10 @@ impl Chim {
                         self.handle_key_event(KeyEvent(mods and !(GlfwMod.Control or GlfwMod.Alt), KeyEventType.Char('@')))
                         return
                     }
+                    if ch == 'ß' and (GlfwMod.Control or GlfwMod.Alt is in mods) {
+                        self.handle_key_event(KeyEvent(mods and !(GlfwMod.Control or GlfwMod.Alt), KeyEventType.Char('\')))
+                        return
+                    }
                     if ch.is_alpha() {
                         self.handle_key_event(KeyEvent(mods, KeyEventType.Char(ch)))
                         return
@@ -946,7 +950,7 @@ impl Chim {
             return
         }
 
-        if c == '@' or c == '€' or (c == ' ' and self.current_mods != .None) {
+        if c == '@' or c == '€' or c == '\' or (c == ' ' and self.current_mods != .None) {
             return
         }
 
