@@ -62,6 +62,8 @@ impl ScriptingEngine {
         state.set_field(-2, "command")
         state.push_function(lua_chim_map)
         state.set_field(-2, "map")
+        state.push_function(lua_chim_map_language)
+        state.set_field(-2, "map_language")
         state.set_global("chim")
 
         // create table for callbacks
@@ -118,19 +120,38 @@ lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
 
     // check if first arg is string
     mode_name := try(state.to_string(1))
+    key_combo := try(state.to_string(2))
+
+    return create_mapping(state, "", mode_name, key_combo, 3)
+}
+
+lua_chim_map_language :: (state: &mut lua.State) -> Result[int, String] {
+    arg_count := state.get_top()
+    if arg_count < 4 {
+        return Err(fmt.format("Missing arguments"))
+    }
+
+    // check if first arg is string
+    language    := try(state.to_string(1))
+    mode_name   := try(state.to_string(2))
+    key_combo   := try(state.to_string(3))
+
+    return create_mapping(state, language, mode_name, key_combo, 4)
+}
+
+create_mapping :: (state: &mut lua.State, language: string, mode_name: string, key_combo: string, action_index: int) -> Result[int, String] {
+    arg_count := state.get_top()
+    // io.formatln("create_mapping({}, {}, {}, {})", [language, mode_name, key_combo, action_index])
+
     mode := if mode_name == "normal" {
-        Mode.Normal
+        InputMode.Normal
     } else if mode_name == "insert" {
-        Mode.Insert
+        InputMode.Insert
     } else if mode_name == "visual" {
-        Mode.Visual
-    } else if mode_name == "command" {
-        Mode.Command
+        InputMode.Visual
     } else {
         return Err(fmt.format("Unknown mode '{}'", [mode_name]))
     }
-
-    key_combo := try(state.to_string(2))
 
     // parse key_combo
     ParseState :: enum #copy {
@@ -251,26 +272,22 @@ lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
         }
     }
 
-    match state.typ(3) {
+    match state.typ(action_index) {
         .Function -> {
             state.get_global("__callbacks")
-            state.push_value(-2)
+            state.push_value(action_index)
             ref := state.ref(-2)
             state.pop(1) // pop __callbacks
-            io.formatln("mapping {}.{} to script function {}", [mode, key_combo, ref])
 
-            if !g_chim.parsers.contains(mode) {
-                g_chim.parsers.set(mode, Parsers())
-            }
-
-            g_chim.parsers[mode].normal.add(SequenceParser.new(.Script(ref), [], parsers[..]))
+            // io.formatln("mapping {}.{} to script function {}", [mode, key_combo, ref])
+            g_chim.register_command(language, mode, SequenceParser.new(.Script(ref), [], parsers[..]))
         }
 
         .String -> {
-            command := state.to_string(3).unwrap()
+            command := state.to_string(action_index).unwrap()
             mut args := Array[Argument].new()
-            if arg_count > 3 {
-                for 4 ..= arg_count {
+            if arg_count > action_index {
+                for {action_index + 1} ..= arg_count {
                     match state.typ(it) {
                         .String -> {
                             args.add(Argument.Str(state.to_string(it).unwrap().to_owned()))
@@ -282,13 +299,8 @@ lua_chim_map :: (state: &mut lua.State) -> Result[int, String] {
                 }
             }
 
-            io.formatln("mapping {}.{} to {} ({})", [mode, key_combo, command, args[..]])
-
-            if !g_chim.parsers.contains(mode) {
-                g_chim.parsers.set(mode, Parsers())
-            }
-
-            g_chim.parsers[mode].normal.add(SequenceParser.new2(.BuiltIn(command.to_owned()), args, parsers[..]))
+            // io.formatln("mapping {}.{} to {} ({})", [mode, key_combo, command, args[..]])
+            g_chim.register_command(language, mode, SequenceParser.new2(.BuiltIn(command.to_owned()), args, parsers[..]))
         }
 
         $typ -> {

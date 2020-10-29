@@ -9,6 +9,7 @@ use import std.ring_queue
 use import std.unicode
 use import std.hash
 use import std.mem.std_heap_allocator
+use import std.string_cache
 
 mem :: import std.mem.allocator
 io  :: import std.io
@@ -49,22 +50,21 @@ Slot :: struct {
     col : int = 0
 }
 
-Mode :: enum #copy {
+InputMode :: enum #copy {
     Normal
     Insert
     Visual
-    Command
 }
 
-impl Hashable for Mode {
+impl Hashable for InputMode {
     hash :: (&Self) -> u64 {
         as_num := u64(*self)
         return as_num.hash()
     }
 }
 
-impl Equatable[Mode] for Mode {
-    equal :: (&Self, other: &Mode) -> bool {
+impl Equatable[InputMode] for InputMode {
+    equal :: (&Self, other: &InputMode) -> bool {
         return *self == *other
     }
 }
@@ -80,6 +80,29 @@ Parsers :: struct {
     move    := Array[Rc[Parser]].new()
 }
 
+impl Parsers {
+    clone_array :: (arr: []Rc[Parser]) -> Array[Rc[Parser]] {
+        mut result := Array[Rc[Parser]].new(arr.length)
+        for &p in arr {
+            result.add(p.get().clone())
+        }
+        return result
+    }
+
+    clone :: (&Self) -> Array[Rc[Parser]], Array[Rc[Parser]] {
+        mut new_normal_parsers := Array[Rc[Parser]].new(self.normal.count())
+        for &p in self.normal[..] {
+            new_normal_parsers.add(p.get().clone())
+        }
+
+        mut new_move_parsers := Array[Rc[Parser]].new(self.move.count())
+        for &p in self.move[..] {
+            new_move_parsers.add(p.get().clone())
+        }
+        return new_normal_parsers, new_move_parsers
+    }
+}
+
 mut g_chim : ^mut Chim = null
 
 Chim :: struct {
@@ -87,20 +110,23 @@ Chim :: struct {
     /// path of this executable
     exe_path            := ".".to_owned()
 
+    string_cache        := StringCache()
     scripting_engine    := Rc[ScriptingEngine].empty()
 
-    cursors             := Array[(col: int, row: int, typ: CursorType)].new()
-    commands            := RingQueue[Command].new()
-    last_move_command   := Option[(count: int, command: MoveCommand)].None
-
-    key_events          := Array[KeyEvent].new(20)
-
-    // normal_mode
-    parsers             := Map[Mode, Parsers].new()
+    // input
+    language_mappings   := Map[string, Map[InputMode, Parsers]].new()
     current_parser      := Option[Rc[Parser]].None
 
+
+    last_move_command   := Option[(count: int, command: MoveCommand)].None
+    commands            := RingQueue[Command].new()
+    key_events          := Array[KeyEvent].new(20)
+    last_input_mode     := InputMode.Normal
+
+
     // editor stuff
-    current_mode    := Mode.Normal
+    cursors             := Array[(col: int, row: int, typ: CursorType)].new()
+    current_mode    := InputMode.Normal
     recording_macro := false
 
     tabs            := Array[Rc[Tab]].new()
@@ -194,6 +220,7 @@ impl Chim {
             for &file in args {
                 match Buffer.from_file(file.slice()) {
                     Ok($buffer) -> {
+                        buffer.get_mut().language = Some(self.string_cache.intern("cheez"))
                         self.buffers.add(buffer.clone())
                         tabs.add(Tab.new(View.new(buffer)))
                     }
@@ -214,11 +241,12 @@ impl Chim {
         // create command buffer and view
         {
             buffer := Buffer.scratch()
+            buffer.get_mut().language = Some(self.string_cache.intern("command"))
             self.command_view = View.new(buffer)
         }
 
-        config_path := fmt.format("{}/config/config.lua", [&exe_path])
-        // config_path := fmt.format("./config/config.lua", [&exe_path])
+        // config_path := fmt.format("{}/config/config.lua", [&exe_path])
+        config_path := fmt.format("./config/config.lua", [&exe_path])
         io.formatln("[Chim] loading config file...")
         try_with(self.scripting_engine.get_mut().load_file(config_path.slice()), {
             io.formatln("[ERROR] Failed to load '{}': {}", [&config_path, &err])
@@ -228,20 +256,17 @@ impl Chim {
         return Ok()
     }
 
-    register_command :: (&mut Self, mode: Mode, command: string, args: []Argument, steps: []Rc[Parser]) {
-        if !self.parsers.contains(mode) {
-            self.parsers.set(mode, Parsers())
-        }
-
-        self.parsers[mode].normal.add(SequenceParser.new(.BuiltIn(command.to_owned()), args, steps))
+    register_command :: (&mut Self, language: string, mode: InputMode, parser: Rc[Parser]) {
+        // io.formatln("register_command({}, {})", [language, &mode])
+        mappings := self.language_mappings.get_or_insert(language, () => Map[InputMode, Parsers].new())
+        parsers  := mappings.get_or_insert(mode, () => Parsers())
+        parsers.normal.add(parser)
     }
 
-    register_move_command :: (&mut Self, mode: Mode, command: string, args: []Argument, steps: []Rc[Parser]) {
-        if !self.parsers.contains(mode) {
-            self.parsers.set(mode, Parsers())
-        }
-
-        self.parsers[mode].move.add(SequenceParser.new(.BuiltIn(command.to_owned()), args, steps))
+    register_move_command :: (&mut Self, language: string, mode: InputMode, parser: Rc[Parser]) {
+        mappings := self.language_mappings.get_or_insert(language, () => Map[InputMode, Parsers].new())
+        parsers  := mappings.get_or_insert(mode, () => Parsers())
+        parsers.move.add(parser)
     }
 
     get_window_dim :: (&Self) -> (cols: int, rows: int) {

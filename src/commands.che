@@ -69,7 +69,8 @@ CommandType :: enum {
     Move            : MoveCommand
     Edit            : EditCommand
     View            : ViewCommand
-    SwitchMode      : Mode
+    SwitchMode      : InputMode
+    ActivateCommandLine
     ChangeFontSize  : f32
     ChangeFont      : String
     Script          : (ref: int, args: Array[Argument])
@@ -126,26 +127,26 @@ impl Chim {
 
             .SwitchMode($mode) -> {
                 self.current_mode = mode
+            }
 
-                match self.current_mode {
-                    .Command -> {
-                        self.active_view = self.command_view.clone()
-                    }
-
-                    _ -> {
-                        self.active_view = self.tabs[self.active_tab].get().get_active_view()
-                    }
-                }
+            .ActivateCommandLine -> {
+                self.active_view = self.command_view.clone()
+                self.last_input_mode = self.current_mode
+                self.current_mode = .Insert
             }
 
             .ExecuteCommand -> {
+                // switch back to main view
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
+                self.current_mode = self.last_input_mode
+
+                // get text of command buffer and execute it as a command
                 buffer := self.command_view.get().buffer.get_mut()
                 start, end := Position(0, 0), Position(buffer.lines.count() - 1, buffer.lines[buffer.lines.count() - 1].characters.count())
                 text := buffer.get_text(start, end)
                 buffer.erase_range(start, Position(end.line, end.column), 0)
                 buffer.flush_changes()
                 self.command_view.get_mut().update_cursors()
-                self.execute_command(1, .SwitchMode(Mode.Normal))
                 self.parse_and_execute_command(text.slice())
             }
 

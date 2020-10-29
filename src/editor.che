@@ -155,13 +155,15 @@ impl BufferEdit {
 
 Buffer :: struct {
     allocator   : Rc[ArenaAllocator]
-    file        : Option[String]
     lines       : GapBuffer[BufferLine]
     dirty       : bool
 
-    undo_stack  : Array[BufferEdit]
-    undo_temp   : Array[BufferEdit]
-    redo_stack  : Array[BufferEdit]
+    undo_stack  := Array[BufferEdit].new()
+    undo_temp   := Array[BufferEdit].new()
+    redo_stack  := Array[BufferEdit].new()
+
+    file        := Option[String].None
+    language    := Option[string].None
 }
 
 impl Buffer {
@@ -185,12 +187,9 @@ impl Buffer {
 
         return Ok(Rc[Buffer].new(Buffer(
             allocator   = arena
-            file        = Some(path.to_owned())
             lines       = lines
             dirty       = false
-            undo_stack  = Array[BufferEdit].new()
-            undo_temp   = Array[BufferEdit].new()
-            redo_stack  = Array[BufferEdit].new()
+            file        = Some(path.to_owned())
         )))
     }
 
@@ -201,12 +200,8 @@ impl Buffer {
         lines.append(BufferLine.empty(arena.get()), arena.get())
         return Rc[Buffer].new(Buffer(
             allocator   = arena
-            file        = .None
             lines       = lines
             dirty       = true
-            undo_stack  = Array[BufferEdit].new()
-            undo_temp   = Array[BufferEdit].new()
-            redo_stack  = Array[BufferEdit].new()
         ))
     }
 

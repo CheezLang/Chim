@@ -444,11 +444,11 @@ impl Parser for SequenceParser {
                     } else if name == "tab_prev" {
                         CommandType.TabPrev
                     } else if name == "mode_insert" {
-                        CommandType.SwitchMode(Mode.Insert)
+                        CommandType.SwitchMode(InputMode.Insert)
                     } else if name == "mode_normal" {
-                        CommandType.SwitchMode(Mode.Normal)
-                    } else if name == "mode_command" {
-                        CommandType.SwitchMode(Mode.Command)
+                        CommandType.SwitchMode(InputMode.Normal)
+                    } else if name == "activate_command_line" {
+                        CommandType.ActivateCommandLine
                     } else if name == "execute_command" {
                         CommandType.ExecuteCommand
                     } else if name == "buffer_save" {
@@ -591,26 +591,15 @@ impl Parser for SequenceParser {
 }
 
 NormalParser :: struct {
-    normal_parsers  : Array[Rc[Parser]]
-    move_parsers    : Array[Rc[Parser]]
+    parsers         : Array[Array[Rc[Parser]]]
     final_parser    : Option[Rc[Parser]]
     _state          : ParserState
 }
 
 impl NormalParser {
-    new :: (normal_parsers: []Rc[Parser], move_parsers: []Rc[Parser]) -> Rc[Parser] {
-        mut new_normal_parsers := Array[Rc[Parser]].new(normal_parsers.length)
-        for &p in normal_parsers {
-            new_normal_parsers.add(p.get().clone())
-        }
-
-        mut new_move_parsers := Array[Rc[Parser]].new(move_parsers.length)
-        for &p in move_parsers {
-            new_move_parsers.add(p.get().clone())
-        }
+    new :: (parsers: Array[Array[Rc[Parser]]]) -> Rc[Parser] {
         return Rc[Parser].new(NormalParser(
-            normal_parsers  = new_normal_parsers
-            move_parsers    = new_move_parsers
+            parsers         = parsers
             final_parser    = .None
             _state          = .InProgress
         ))
@@ -623,14 +612,11 @@ impl Parser for NormalParser {
     }
 
     accepts_numbers :: (&Self) -> bool {
-        for &parser in self.normal_parsers[..] {
-            if parser.get().accepts_numbers() then {
-                return true
-            }
-        }
-        for &parser in self.move_parsers[..] {
-            if parser.get().accepts_numbers() then {
-                return true
+        for &parsers in self.parsers[..] {
+            for &parser in parsers[..] {
+                if parser.get().accepts_numbers() then {
+                    return true
+                }
             }
         }
 
@@ -638,12 +624,16 @@ impl Parser for NormalParser {
     }
 
     clone :: (&mut Self) -> Rc[Parser] {
-        return Self.new(self.normal_parsers[..], self.move_parsers[..])
+        mut parsers := Array[Array[Rc[Parser]]].new()
+        for &p in self.parsers[..] {
+            parsers.add(Parsers.clone_array(p[..]))
+        }
+        return Self.new(parsers)
     }
 
     build_command :: (&Self) -> Result[Command, String] {
         if self._state != .Success {
-            return Err(fmt.format("{} sequences matched the input", [self.normal_parsers.count()]))
+            return Err(fmt.format("Multiple commands matched the input", []))
         }
 
         @assert(self.final_parser.is_some())
@@ -659,85 +649,39 @@ impl Parser for NormalParser {
             .InProgress -> {
                 parser_log("NormalParser.advance({})", [event])
 
-                normal_success_parsers      := Array[Rc[Parser]].new()
-                normal_in_progress_parsers  := Array[Rc[Parser]].new()
-                move_success_parsers        := Array[Rc[Parser]].new()
-                move_in_progress_parsers    := Array[Rc[Parser]].new()
-
-                for &p in self.normal_parsers[..] {
-                    p.get().advance(event)
-                    match p.get().state() {
-                        .InProgress -> {
-                            normal_in_progress_parsers.add(p.clone())
+                for &mut parsers in self.parsers.slice_mut() {
+                    for {0 .. parsers.count()}.reverse() {
+                    // for &p in parsers[..] {
+                        p := parsers[it].get_mut()
+                        p.advance(event)
+                        match p.state() {
+                            .InProgress -> {}
+                            .Success -> {}
+                            .Error -> {
+                                parsers.remove_at(it)
+                            }
                         }
-                        .Success -> {
-                            normal_success_parsers.add(p.clone())
-                        }
-                        .Error -> {}
                     }
                 }
 
-                for &p in self.move_parsers[..] {
-                    p.get().advance(event)
-                    match p.get().state() {
-                        .InProgress -> {
-                            move_in_progress_parsers.add(p.clone())
-                        }
-                        .Success -> {
-                            move_success_parsers.add(p.clone())
-                        }
-                        .Error -> {}
+                mut in_progress := false
+                for &parsers in self.parsers[..] {
+                    if parsers.count() == 1 and parsers[0].get().state() == .Success {
+                        self.final_parser = Some(parsers[0].clone())
+                        in_progress = false
+                        break
+                    }
+                    if parsers.count() > 0 {
+                        in_progress = true
                     }
                 }
 
-                parser_log("NormalParser.advance({}): {} success, {} in progress", [event, normal_success_parsers.count(), normal_in_progress_parsers.count()])
-
-                if normal_success_parsers.count() == 1 {
-                    self._state = .Success
-                    self.final_parser = Some(normal_success_parsers[0].clone())
-                    Memory.drop(normal_success_parsers)
-                    Memory.drop(normal_in_progress_parsers)
-                    Memory.drop(move_success_parsers)
-                    Memory.drop(move_in_progress_parsers)
-                } else if normal_success_parsers.count() > 0 {
-                    self._state = .Error
-                    self.normal_parsers = normal_success_parsers
-                    Memory.drop(normal_in_progress_parsers)
-                    Memory.drop(move_success_parsers)
-                    Memory.drop(move_in_progress_parsers)
-                } else if normal_in_progress_parsers.count() > 0 {
+                if in_progress {
                     self._state = .InProgress
-                    self.normal_parsers = normal_in_progress_parsers
-                    Memory.drop(normal_success_parsers)
-                    Memory.drop(move_success_parsers)
-                    Memory.drop(move_in_progress_parsers)
-                } else if move_success_parsers.count() == 1 {
-                    self._state = .Success
-                    self.final_parser = Some(move_success_parsers[0].clone())
-                    Memory.drop(normal_success_parsers)
-                    Memory.drop(normal_in_progress_parsers)
-                    Memory.drop(move_success_parsers)
-                    Memory.drop(move_in_progress_parsers)
-                } else if move_success_parsers.count() > 1 {
+                } else if self.final_parser.is_none() {
                     self._state = .Error
-                    self.normal_parsers.clear()
-                    self.move_parsers = move_success_parsers
-                    Memory.drop(normal_success_parsers)
-                    Memory.drop(normal_in_progress_parsers)
-                    Memory.drop(move_in_progress_parsers)
-                } else if move_in_progress_parsers.count() > 0 {
-                    self._state = .InProgress
-                    self.normal_parsers.clear()
-                    self.move_parsers = move_in_progress_parsers
-                    Memory.drop(normal_success_parsers)
-                    Memory.drop(normal_in_progress_parsers)
-                    Memory.drop(move_success_parsers)
                 } else {
-                    self._state = .Error
-                    Memory.drop(normal_success_parsers)
-                    Memory.drop(normal_in_progress_parsers)
-                    Memory.drop(move_success_parsers)
-                    Memory.drop(move_in_progress_parsers)
+                    self._state = .Success
                 }
             }
 
@@ -766,16 +710,49 @@ impl Chim {
         if self.current_parser.is_none() {
             parser_log("handle_key_event: creating new parser")
 
-            match self.parsers.get(current_mode) {
-                Some($parsers) -> {
-                    self.current_parser = Some(NormalParser.new(parsers.normal[..], parsers.move[..]))
-                }
+            active_language := self.active_view.get().buffer.get().language.unwrap_or("")
 
-                None -> {
-                    io.formatln("No keybindings for mode '{}' specified", [current_mode])
-                    return
+            mut parsers := Array[Array[Rc[Parser]]].new()
+
+            if active_language != "" {
+                match self.language_mappings.get(active_language) {
+                    Some($mappings) -> {
+                        match mappings.get(current_mode) {
+                            Some($p) -> {
+                                normal, move := p.clone()
+                                parsers.add(normal)
+                                parsers.add(move)
+                            }
+
+                            None -> {
+                                // io.formatln("{}: No keybindings for mode '{}' specified", [active_language, current_mode])
+                            }
+                        }
+                    }
+
+                    None -> {}
                 }
             }
+
+            match self.language_mappings.get("") {
+                Some($mappings) -> {
+                    match mappings.get(current_mode) {
+                        Some($p) -> {
+                            normal, move := p.clone()
+                            parsers.add(normal)
+                            parsers.add(move)
+                        }
+
+                        None -> {
+                            // io.formatln("No keybindings for mode '{}' specified", [current_mode])
+                        }
+                    }
+                }
+
+                None -> {}
+            }
+
+            self.current_parser = Some(NormalParser.new(parsers))
         }
 
         @assert(self.current_parser.is_some())

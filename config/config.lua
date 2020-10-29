@@ -39,7 +39,7 @@ do
     chim.map("normal", "{CS Tab}", "editor.tab_prev")
     chim.map("normal", "{C s}", "editor.buffer_save")
     chim.map("normal", "i", "editor.mode_insert")
-    chim.map("normal", "{C r}", "editor.mode_command")
+    chim.map("normal", "{C r}", "editor.activate_command_line")
 
     -- buffer commands
     chim.map("normal", "{Backspace}", "buffer.delete_left")
@@ -87,7 +87,7 @@ do
     chim.map("insert", "{C s}", "editor.buffer_save")
     chim.map("insert", "{C e}", "editor.mode_normal")
     chim.map("insert", "{Escape}", "editor.mode_normal")
-    chim.map("insert", "{C r}", "editor.mode_command")
+    chim.map("insert", "{C r}", "editor.activate_command_line")
     
     -- buffer commands
     chim.map("insert", "{Backspace}", "buffer.delete_left")
@@ -108,38 +108,16 @@ end
 
 -- command mode key bindings
 do
-    -- move commands
-    chim.map("command", "{Left}", "move.left")
-    chim.map("command", "{Right}", "move.right")
-    chim.map("command", "{Up}", "move.up")
-    chim.map("command", "{Down}", "move.down")
-    chim.map("command", "{Home}", "move.line_home")
-    chim.map("command", "{End}", "move.line_end")
-    chim.map("command", "{C Home}", "move.buffer_home")
-    chim.map("command", "{C End}", "move.buffer_end")
-    chim.map("command", "{S Left}", "move.select_left")
-    chim.map("command", "{S Right}", "move.select_right")
-    chim.map("command", "{S Home}", "move.select_line_home")
-    chim.map("command", "{S End}", "move.select_line_end")
-    chim.map("command", "{CS Home}", "move.select_buffer_home")
-    chim.map("command", "{CS End}", "move.select_buffer_end")
-    
-    -- editor commands
-    chim.map("command", "{C Tab}", "editor.tab_next")
-    chim.map("command", "{CS Tab}", "editor.tab_prev")
-    chim.map("command", "{C e}", "editor.mode_normal")
-    chim.map("command", "{Escape}", "editor.mode_normal")
-    chim.map("command", "{Enter}", "editor.execute_command")
-    
-    -- buffer commands
-    chim.map("command", "{Backspace}", "buffer.delete_left")
-    chim.map("command", "{Delete}", "buffer.delete_right")
-    chim.map("command", "{Tab}", "buffer.insert_tab")
-    chim.map("command", "{C y}", "buffer.redo")
-    chim.map("command", "{C c}", "buffer.copy")
-    chim.map("command", "{C v}", "buffer.paste")
-    chim.map("command", "{char}", "buffer.insert_char")
-    chim.map("command", "{S Space}", "buffer.insert", " ")
-    chim.map("command", "{S Enter}", "buffer.insert", "\n")
-    chim.map("command", "{C z}", "buffer.undo")
+    chim.map_language("command", "insert", "{S Enter}", "buffer.insert", "\n")
+    chim.map_language("command", "insert", "{Enter}", "editor.execute_command")
+    chim.map_language("command", "normal", "{Enter}", "editor.execute_command")
+    chim.map_language("command", "normal", "{Escape}", "editor.cancel_command")
+
+    chim.map_language("cheez", "normal", "{S Enter}", function(count)
+        print("only for cheez")
+    end)
+end
+
+function lua_function(text)
+    print("Cheez->Lua: " .. text)
 end

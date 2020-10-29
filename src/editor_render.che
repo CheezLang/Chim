@@ -490,15 +490,16 @@ impl Chim {
         }
 
         // render cursor
-        cursor_type := match self.current_mode {
-            .Normal -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
-            .Visual -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
-            .Insert -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Line
-            .Command -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Line
-            _       -> CursorType.Underscore
-        }
-        for &cursor in visual_cursors[..] {
-            self.render_cursor(cursor.visual.column + bounds_min.col + line_number_digits - cursor_scroll, cursor.visual.line + bounds_min.row , cursor_type)
+        if ^*view == ^*self.active_view.get() {
+            cursor_type := match self.current_mode {
+                .Normal -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
+                .Visual -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
+                .Insert -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Line
+                _       -> CursorType.Underscore
+            }
+            for &cursor in visual_cursors[..] {
+                self.render_cursor(cursor.visual.column + bounds_min.col + line_number_digits - cursor_scroll, cursor.visual.line + bounds_min.row , cursor_type)
+            }
         }
     }
 
@@ -571,10 +572,6 @@ impl Chim {
                 col = self.render_text_at(col, row, "VISUAL", .Default, .MenuBackground)
             }
 
-            .Command -> {
-                col = self.render_text_at(col, row, "COMMAND", .Default, .MenuBackground)
-            }
-
             _ -> {}
         }
         col = self.render_text_at(col, row, "]", .Default, .MenuBackground)
@@ -599,7 +596,10 @@ impl Chim {
                             if GlfwMod.Alt is in event.mods {
                                 col = self.render_text_at(col, row, "A", .Keyword, .MenuBackground)
                             }
-                            col = self.render_text_at(col, row, "-", .Keyword, .MenuBackground)
+                            if GlfwMod.Super is in event.mods {
+                                col = self.render_text_at(col, row, "W", .Keyword, .MenuBackground)
+                            }
+                            col = self.render_text_at(col, row, " ", .Keyword, .MenuBackground)
                             col = self.render_char_at(col, row, ch, .Keyword, .MenuBackground)
                             col = self.render_text_at(col, row, "}", .Keyword, .MenuBackground)
                         } else {
@@ -617,7 +617,10 @@ impl Chim {
                             if GlfwMod.Alt is in event.mods {
                                 col = self.render_text_at(col, row, "A", .Keyword, .MenuBackground)
                             }
-                            col = self.render_text_at(col, row, "-", .Keyword, .MenuBackground)
+                            if GlfwMod.Super is in event.mods {
+                                col = self.render_text_at(col, row, "W", .Keyword, .MenuBackground)
+                            }
+                            col = self.render_text_at(col, row, " ", .Keyword, .MenuBackground)
                             col = self.render_char_at(col, row, ch, .Keyword, .MenuBackground)
                             col = self.render_text_at(col, row, "}", .Keyword, .MenuBackground)
                         } else {
@@ -638,7 +641,10 @@ impl Chim {
                         if GlfwMod.Alt is in event.mods {
                             col = self.render_text_at(col, row, "A", .Keyword, .MenuBackground)
                         }
-                        col = self.render_text_at(col, row, "-", .Keyword, .MenuBackground)
+                        if GlfwMod.Super is in event.mods {
+                            col = self.render_text_at(col, row, "W", .Keyword, .MenuBackground)
+                        }
+                        col = self.render_text_at(col, row, " ", .Keyword, .MenuBackground)
                     }
 
                     match @type_info(KeyEventType) {
@@ -659,7 +665,12 @@ impl Chim {
 
         tab := self.tabs[self.active_tab].get()
         view := tab.get_active_view()
-        right_side := fmt.format("{}:{} / {}", [view.get().get_active_cursor().start.line + 1, view.get().get_active_cursor().start.column + 1, view.get().buffer.get().lines.count()])
+        right_side := fmt.format("{}  {}:{} / {}", [
+            view.get().buffer.get().language.unwrap_or("")
+            view.get().get_active_cursor().start.line + 1
+            view.get().get_active_cursor().start.column + 1
+            view.get().buffer.get().lines.count()
+        ])
         col = cols - right_side.get_length()
         self.render_text_at(col, row, right_side.slice(), .Default, .MenuBackground)
     }
