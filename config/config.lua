@@ -40,6 +40,10 @@ do
     chim.map("normal", "{C s}", "editor.buffer_save")
     chim.map("normal", "i", "editor.mode_insert")
     chim.map("normal", "{C r}", "editor.activate_command_line")
+    chim.map("normal", ":", function(count)
+        chim.command("editor.activate_command_line")
+        chim.command("buffer.insert", ":")
+    end)
 
     -- buffer commands
     chim.map("normal", "{Backspace}", "buffer.delete_left")
@@ -111,7 +115,7 @@ do
     chim.map_language("command", "insert", "{S Enter}", "buffer.insert", "\n")
     chim.map_language("command", "insert", "{Enter}", "editor.execute_command")
     chim.map_language("command", "normal", "{Enter}", "editor.execute_command")
-    chim.map_language("command", "normal", "{Escape}", "editor.cancel_command")
+    chim.map_language("command", "normal", "{Escape}", "editor.cancel_command_line")
 
     chim.map_language("cheez", "normal", "{S Enter}", function(count)
         print("only for cheez")

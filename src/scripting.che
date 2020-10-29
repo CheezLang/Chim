@@ -328,15 +328,24 @@ lua_chim_command :: (state: &mut lua.State) -> Result[int, String] {
     }
 
     command_name := try(state.to_string(1))
-    if command_name == "edit.insert" {
-        if arg_count < 2 {
-            return Err(fmt.format("Missing argument"))
+
+    mut args := Array[Argument].new()
+    if arg_count > 1 {
+        for 2 ..= arg_count {
+            match state.typ(it) {
+                .String -> {
+                    args.add(Argument.Str(state.to_string(it).unwrap().to_owned()))
+                }
+                $typ -> {
+                    return Err(fmt.format("Invalid argument typ at index {}", [it_index]))
+                }
+            }
         }
-        arg := try(state.to_string(2))
-        g_chim.commands.push(Command(0, CommandType.Edit(EditCommand.InsertText(arg.to_owned()))))
-    } else {
-        return Err(fmt.format("Unknown command: '{}'", [command_name]))
     }
+
+    command := try(Command.parse(0, command_name, args[..]))
+    // io.formatln("chim.command({}, {}): {}", [command_name, args[..], &command])
+    g_chim.commands.push(command)
 
     return Ok(0)
 }
