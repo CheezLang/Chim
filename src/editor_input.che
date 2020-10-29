@@ -546,11 +546,13 @@ impl Parser for SequenceParser {
 
         match self._state {
             .InProgress -> {
-                if self.current == 0 and event.mods == .None and !self.parsers[0].get().accepts_numbers() {
-                    match event.typ {
-                        .Char($ch) if ch.is_digit() -> {
-                            self.count = self.count * 10 + int(ch - '0')
-                            return
+                if self.current == 0 {
+                    match event.mods, event.typ {
+                        GlfwMod.None, KeyEventType.Char($ch) if ch.is_digit() -> {
+                            if !self.parsers[0].get().accepts_numbers() {
+                                self.count = self.count * 10 + int(ch - '0')
+                                return
+                            }
                         }
                         _ -> {}
                     }
@@ -651,7 +653,6 @@ impl Parser for NormalParser {
 
                 for &mut parsers in self.parsers.slice_mut() {
                     for {0 .. parsers.count()}.reverse() {
-                    // for &p in parsers[..] {
                         p := parsers[it].get_mut()
                         p.advance(event)
                         match p.state() {
@@ -665,11 +666,13 @@ impl Parser for NormalParser {
                 }
 
                 mut in_progress := false
-                for &parsers in self.parsers[..] {
-                    if parsers.count() == 1 and parsers[0].get().state() == .Success {
-                        self.final_parser = Some(parsers[0].clone())
-                        in_progress = false
-                        break
+                for &parsers in self.parsers[..] #label outer_loop {
+                    for &p in parsers[..] {
+                        if p.get().state() == .Success {
+                            self.final_parser = Some(p.clone())
+                            in_progress = false
+                            break outer_loop
+                        }
                     }
                     if parsers.count() > 0 {
                         in_progress = true
@@ -930,7 +933,6 @@ impl Chim {
                 GlfwKey.KpEqual -> KeyEventType.KpEqual
 
                 _ -> {
-                    // io.formatln("                                                              ignoring key {}, {}, {}", [key, action, mods])
                     return
                 }
             }
