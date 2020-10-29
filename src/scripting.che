@@ -80,6 +80,11 @@ impl ScriptingEngine {
         return Ok()
     }
 
+    execute_script :: (&mut Self, script: string) -> Result[(), String] {
+        try(self.state.do_string(script))
+        return Ok()
+    }
+
     run_callback :: (&mut Self, count: int, ref: int, args: []Argument) -> Result[(), String] {
         state.get_global("__callbacks")
         defer state.pop(1)

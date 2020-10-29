@@ -107,12 +107,22 @@ impl Chim {
         io.formatln("parse_and_execute_command: '{}'", [&command])
 
         // temp
-        if command.starts_with("buffer.set_name") {
-            name := command[16..]
-            view := self.tabs[self.active_tab].get().get_active_view()
-            buffer := view.get().buffer.get_mut()
-            buffer.file = Some(name.to_owned())
-            buffer.dirty = true
+        if command.starts_with(":") {
+            command := command[1..]
+            if command.starts_with("buffer.set_name") {
+                name := command[16..]
+                view := self.tabs[self.active_tab].get().get_active_view()
+                buffer := view.get().buffer.get_mut()
+                buffer.file = Some(name.to_owned())
+                buffer.dirty = true
+            }
+        } else {
+            match self.scripting_engine.get_mut().execute_script(command) {
+                Ok(_) -> {}
+                Err($err) -> {
+                    io.formatln("[ERROR] {}", [&err])
+                }
+            }
         }
     }
 
