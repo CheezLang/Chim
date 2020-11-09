@@ -25,6 +25,7 @@ imgui :: import imgui
 lua :: import lua_cheez
 
 use import editor
+use import buffer
 use import gap_buffer
 use import editor_input
 use import editor_render
@@ -117,7 +118,6 @@ Chim :: struct {
     language_mappings   := Map[string, Map[InputMode, Parsers]].new()
     current_parser      := Option[Rc[Parser]].None
 
-
     last_move_command   := Option[(count: int, command: MoveCommand)].None
     commands            := RingQueue[Command].new()
     key_events          := Array[KeyEvent].new(20)
@@ -126,14 +126,14 @@ Chim :: struct {
 
     // editor stuff
     cursors             := Array[(col: int, row: int, typ: CursorType)].new()
-    current_mode    := InputMode.Normal
-    recording_macro := false
+    current_mode        := InputMode.Normal
+    recording_macro     := false
 
-    tabs            := Array[Rc[Tab]].new()
-    active_tab      := 0
-    buffers         := Array[Rc[Buffer]].new()
-    command_view    := Rc[View].empty()
-    active_view     := Rc[View].empty()
+    tabs                := Array[Rc[Tab]].new()
+    active_tab          := 0
+    buffers             := Array[Rc[Buffer]].new()
+    command_view        := Rc[View].empty()
+    active_view         := Rc[View].empty()
 
     window_pixel_size   := vec2(0, 0)
     has_focus           := false

@@ -44,6 +44,12 @@ do
         chim.command("editor.activate_command_line")
         chim.command("buffer.insert", ":")
     end)
+    chim.map("normal", "{Space}vv", "editor.split_vertical")
+    chim.map("normal", "{Space}vh", "editor.split_horizontal")
+    chim.map("normal", "{Space}vn", "editor.prev_vertical_split")
+    chim.map("normal", "{Space}vt", "editor.next_vertical_split")
+    chim.map("normal", "{Space}vg", "editor.prev_horizontal_split")
+    chim.map("normal", "{Space}vr", "editor.next_horizontal_split")
 
     -- buffer commands
     chim.map("normal", "{Backspace}", "buffer.delete_left")

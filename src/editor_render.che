@@ -19,6 +19,7 @@ use import imgui_opengl
 imgui :: import imgui
 
 use import editor
+use import buffer
 use import editor_input
 use import gap_buffer
 
@@ -108,8 +109,34 @@ impl Chim {
         }
 
         // @todo: handle multiple views
-        view := tab.get_active_view()
-        self.render_view(view.get_mut(), min, max)
+        // view := tab.get_active_view()
+        // self.render_view(view.get_mut(), min, max)
+
+        // io.formatln("----------")
+        render_split(&tab.split, min, max)
+    }
+
+    render_split :: (&mut Self, split: &Split, min: (col: int, row: int), max: (col: int, row: int)) {
+        // io.formatln("render_split({}, {})", [min, max])
+        match split {
+            .None($view) -> self.render_view(view.get_mut(), min, max)
+            .Vertical($splits) -> {
+                available_width := max.col - min.col
+                width := available_width / splits.count()
+
+                for &split in splits[..] {
+                    render_split(split, (min.col + it_index * width, min.row), (min.col + (it_index + 1) * width, max.row))
+                }
+            }
+            .Horizontal($splits) -> {
+                available_height := max.row - min.row
+                height := available_height / splits.count()
+
+                for &split in splits[..] {
+                    render_split(split, (min.col, min.row + it_index * height), (max.col, min.row + (it_index + 1) * height))
+                }
+            }
+        }
     }
 
     calculate_visual_cursor :: (&mut Self, mut cursor: (actual: Position, visual: Position), lines: &GapBuffer[BufferLine], line0: int, line1: int, bounds: (cols: int, rows: int), wrapping: bool) -> Position {
