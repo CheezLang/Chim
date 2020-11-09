@@ -126,6 +126,7 @@ Chim :: struct {
 
     // editor stuff
     cursors             := Array[(col: int, row: int, typ: CursorType)].new()
+    overlays            := Array[(bounds_min: (col: int, row: int), bounds_max: (col: int, row: int), color: u32)].new()
     current_mode        := InputMode.Normal
     recording_macro     := false
 

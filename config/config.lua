@@ -51,6 +51,10 @@ do
     chim.map("normal", "{Space}vg", "editor.prev_horizontal_split")
     chim.map("normal", "{Space}vr", "editor.next_horizontal_split")
     chim.map("normal", "{Space}vq", "editor.close_view")
+    chim.map("normal", "{CS n}", "editor.prev_vertical_split")
+    chim.map("normal", "{CS t}", "editor.next_vertical_split")
+    chim.map("normal", "{CS g}", "editor.prev_horizontal_split")
+    chim.map("normal", "{CS r}", "editor.next_horizontal_split")
 
     -- buffer commands
     chim.map("normal", "{Backspace}", "buffer.delete_left")
