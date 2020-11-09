@@ -84,6 +84,7 @@ CommandType :: enum {
     SplitVertical, SplitHorizontal
     NextVerticalSplit, PrevVerticalSplit
     NextHorizontalSplit, PrevHorizontalSplit
+    CloseView
 }
 
 impl Clone for CommandType {
@@ -241,6 +242,8 @@ impl Command {
                 CommandType.NextHorizontalSplit
             } else if name == "prev_horizontal_split" {
                 CommandType.PrevHorizontalSplit
+            } else if name == "close_view" {
+                CommandType.CloseView
             } else {
                 return Err(fmt.format("Unknown editor command: '{}'", [command]))
             }
@@ -438,6 +441,11 @@ impl Chim {
             .NextHorizontalSplit -> {
                 view := self.active_view.clone()
                 self.tabs[self.active_tab].get_mut().move_horizontal_split(1)
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
+            }
+
+            .CloseView -> {
+                self.tabs[self.active_tab].get_mut().close_view()
                 self.active_view = self.tabs[self.active_tab].get().get_active_view()
             }
 

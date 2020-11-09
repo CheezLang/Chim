@@ -644,37 +644,23 @@ impl Clone for Split {
 }
 
 impl Split {
-    get_view :: (&Self, path: []int) -> Option[Rc[View]] {
+    get_view :: (&Self, path: []int) -> Rc[View] {
         // io.formatln("get_view({})", [path])
         if path.length == 0 {
-            return Some(self.get_first_view())
+            return self.get_first_view()
         }
 
         return match self {
-            .None($view) -> {
-                if path.length == 1 and *path[0] == 0 {
-                    Some(view.clone())
-                } else {
-                    None
-                }
-            }
+            .None($view) -> view.clone()
 
             .Vertical($splits) -> {
                 index := *path[0]
-                if index < 0 or index >= splits.count() {
-                    None
-                } else {
-                    splits[index].get_view(path[1..])
-                }
+                splits[index.clamp(0, splits.count() - 1)].get_view(path[1..])
             }
 
             .Horizontal($splits) -> {
                 index := *path[0]
-                if index < 0 or index >= splits.count() {
-                    None
-                } else {
-                    splits[index].get_view(path[1..])
-                }
+                splits[index.clamp(0, splits.count() - 1)].get_view(path[1..])
             }
 
             _ -> @assert(false)
@@ -721,6 +707,80 @@ impl Split {
             return Some(path)
         } else {
             return None
+        }
+    }
+
+    close :: (&Self, path: []int) -> Split {
+        close_impl :: (self: &Self, path: []int) -> Option[Split] {
+            if path.length == 0 {
+                return None
+            }
+            return match self {
+                .None($view) -> None
+
+                .Vertical($splits) -> {
+                    to_close_index := *path[0]
+
+                    closed := close_impl(splits[to_close_index], path[1..])
+
+                    mut result := splits.clone()
+                    match closed {
+                        Some($split) -> {
+                            *result[to_close_index] = split
+                        }
+
+                        None -> {
+                            result.remove_at(to_close_index)
+                        }
+                    }
+
+                    if result.count() == 0 {
+                        Memory.drop(result)
+                        None
+                    } else if result.count() == 1 {
+                        split := result[0].clone()
+                        Memory.drop(result)
+                        Some(split)
+                    } else {
+                        Some(Split.Vertical(result))
+                    }
+                }
+
+                .Horizontal($splits) -> {
+                    to_close_index := *path[0]
+
+                    closed := close_impl(splits[to_close_index], path[1..])
+
+                    mut result := splits.clone()
+                    match closed {
+                        Some($split) -> {
+                            *result[to_close_index] = split
+                        }
+
+                        None -> {
+                            result.remove_at(to_close_index)
+                        }
+                    }
+
+                    if result.count() == 0 {
+                        Memory.drop(result)
+                        None
+                    } else if result.count() == 1 {
+                        split := result[0].clone()
+                        Memory.drop(result)
+                        Some(split)
+                    } else {
+                        Some(Split.Horizontal(result))
+                    }
+                }
+
+                _ -> @assert(false)
+            }
+        }
+
+        return match close_impl(self, path) {
+            Some($split) -> split
+            None         -> self.clone()
         }
     }
 
@@ -1092,7 +1152,7 @@ impl Tab {
         // io.formatln("move_vertical_split({}): path={}", [offset, path.slice()])
         if self.split.get_vertical_view(&mut path, offset) {
             // io.formatln("move_vertical_split({}): path={}", [offset, path.slice()])
-            self.active_view = self.split.get_view(path.slice()).unwrap()
+            self.active_view = self.split.get_view(path.slice())
         }
     }
 
@@ -1104,7 +1164,16 @@ impl Tab {
         // io.formatln("move_horizontal_split({}): path={}", [offset, path.slice()])
         if self.split.get_horizontal_view(&mut path, offset) {
             // io.formatln("move_horizontal_split({}): path={}", [offset, path.slice()])
-            self.active_view = self.split.get_view(path.slice()).unwrap()
+            self.active_view = self.split.get_view(path.slice())
         }
+    }
+
+    close_view :: (&mut Self) {
+        path := try_with(self.split.get_path(&self.active_view), {
+            return
+        })
+        new_split := self.split.close(path.slice())
+        self.split = new_split
+        self.active_view = self.split.get_view(path.slice())
     }
 }
