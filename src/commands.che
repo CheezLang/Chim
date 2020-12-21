@@ -81,6 +81,10 @@ CommandType :: enum {
     BufferSave
     RepeatLastMove
     RepeatLastMoveInv
+    SplitVertical, SplitHorizontal
+    NextVerticalSplit, PrevVerticalSplit
+    NextHorizontalSplit, PrevHorizontalSplit
+    CloseView
 }
 
 impl Clone for CommandType {
@@ -226,6 +230,20 @@ impl Command {
                 CommandType.ExecuteCommand
             } else if name == "buffer_save" {
                 CommandType.BufferSave
+            } else if name == "split_vertical" {
+                CommandType.SplitVertical
+            } else if name == "split_horizontal" {
+                CommandType.SplitHorizontal
+            } else if name == "next_vertical_split" {
+                CommandType.NextVerticalSplit
+            } else if name == "prev_vertical_split" {
+                CommandType.PrevVerticalSplit
+            } else if name == "next_horizontal_split" {
+                CommandType.NextHorizontalSplit
+            } else if name == "prev_horizontal_split" {
+                CommandType.PrevHorizontalSplit
+            } else if name == "close_view" {
+                CommandType.CloseView
             } else {
                 return Err(fmt.format("Unknown editor command: '{}'", [command]))
             }
@@ -390,6 +408,45 @@ impl Chim {
                 for 0 .. count {
                     self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
                 }
+            }
+
+            .SplitVertical -> {
+                view := self.active_view.clone()
+                self.tabs[self.active_tab].get_mut().split_vertical(view)
+            }
+
+            .SplitHorizontal -> {
+                view := self.active_view.clone()
+                self.tabs[self.active_tab].get_mut().split_horizontal(view)
+            }
+
+            .PrevVerticalSplit -> {
+                view := self.active_view.clone()
+                self.tabs[self.active_tab].get_mut().move_vertical_split(-1)
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
+            }
+
+            .NextVerticalSplit -> {
+                view := self.active_view.clone()
+                self.tabs[self.active_tab].get_mut().move_vertical_split(1)
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
+            }
+
+            .PrevHorizontalSplit -> {
+                view := self.active_view.clone()
+                self.tabs[self.active_tab].get_mut().move_horizontal_split(-1)
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
+            }
+
+            .NextHorizontalSplit -> {
+                view := self.active_view.clone()
+                self.tabs[self.active_tab].get_mut().move_horizontal_split(1)
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
+            }
+
+            .CloseView -> {
+                self.tabs[self.active_tab].get_mut().close_view()
+                self.active_view = self.tabs[self.active_tab].get().get_active_view()
             }
 
             .DeleteLine -> {

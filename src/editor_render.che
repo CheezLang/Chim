@@ -19,6 +19,7 @@ use import imgui_opengl
 imgui :: import imgui
 
 use import editor
+use import buffer
 use import editor_input
 use import gap_buffer
 
@@ -57,6 +58,7 @@ PaletteIndex :: enum #tag_type(i32) #copy {
     CurrentLineFillInactive
     CurrentLineEdge
     Whitespace
+    InactiveTint
     Max
 }
 
@@ -91,6 +93,7 @@ impl Palette {
         *values[int(PaletteIndex.CurrentLineFillInactive)]      = 0x40808080
         *values[int(PaletteIndex.CurrentLineEdge)]              = 0x40a0a0a0
         *values[int(PaletteIndex.Whitespace)]                   = 0xff202020
+        *values[int(PaletteIndex.InactiveTint)]                 = 0x30404040
         return Palette(values)
     }
 
@@ -108,8 +111,34 @@ impl Chim {
         }
 
         // @todo: handle multiple views
-        view := tab.get_active_view()
-        self.render_view(view.get_mut(), min, max)
+        // view := tab.get_active_view()
+        // self.render_view(view.get_mut(), min, max)
+
+        // io.formatln("----------")
+        render_split(&tab.split, min, max)
+    }
+
+    render_split :: (&mut Self, split: &Split, min: (col: int, row: int), max: (col: int, row: int)) {
+        // io.formatln("render_split({}, {})", [min, max])
+        match split {
+            .None($view) -> self.render_view(view.get_mut(), min, max, view == &self.active_view)
+            .Vertical($splits) -> {
+                available_width := max.col - min.col
+                width := available_width / splits.count()
+
+                for &split in splits[..] {
+                    render_split(split, (min.col + it_index * width, min.row), (min.col + (it_index + 1) * width, max.row))
+                }
+            }
+            .Horizontal($splits) -> {
+                available_height := max.row - min.row
+                height := available_height / splits.count()
+
+                for &split in splits[..] {
+                    render_split(split, (min.col, min.row + it_index * height), (max.col, min.row + (it_index + 1) * height))
+                }
+            }
+        }
     }
 
     calculate_visual_cursor :: (&mut Self, mut cursor: (actual: Position, visual: Position), lines: &GapBuffer[BufferLine], line0: int, line1: int, bounds: (cols: int, rows: int), wrapping: bool) -> Position {
@@ -145,7 +174,7 @@ impl Chim {
         return (line_length + cols - 1) / cols
     }
 
-    render_view :: (&mut Self, view: &mut View, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int)) {
+    render_view :: (&mut Self, view: &mut View, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int), active: bool) {
         wrapping_enabled    := view.wrapping_enabled.unwrap_or(self.wrapping_enabled)
         highlight_curr_line := view.highlight_curr_line.unwrap_or(self.highlight_curr_line)
         line_number_mode    := view.line_number_mode.unwrap_or(self.line_number_mode)
@@ -489,8 +518,8 @@ impl Chim {
             r += 1
         }
 
-        // render cursor
         if ^*view == ^*self.active_view.get() {
+            // render cursor
             cursor_type := match self.current_mode {
                 .Normal -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
                 .Visual -> if self.key_events.count() > 0 then CursorType.Underscore else CursorType.Full
@@ -500,6 +529,8 @@ impl Chim {
             for &cursor in visual_cursors[..] {
                 self.render_cursor(cursor.visual.column + bounds_min.col + line_number_digits - cursor_scroll, cursor.visual.line + bounds_min.row , cursor_type)
             }
+        } else {
+            self.add_overlay(bounds_min, bounds_max, self.palette.get(PaletteIndex.InactiveTint))
         }
     }
 
@@ -546,7 +577,7 @@ impl Chim {
         if self.command_view.get_mut().top_line + rows > self.command_view.get().buffer.get().lines.count() {
             self.command_view.get_mut().top_line = self.command_view.get().buffer.get().lines.count() - rows
         }
-        self.render_view(self.command_view.get_mut(), (0, row), (cols, row + rows))
+        self.render_view(self.command_view.get_mut(), (0, row), (cols, row + rows), (&self.command_view) == (&self.active_view))
     }
 
     render_status_line :: (&mut Self, row: int) {
@@ -750,6 +781,10 @@ impl Chim {
         return col
     }
 
+    add_overlay :: (&mut Self, bounds_min: (col: int, row: int), bounds_max: (col: int, row: int), color: u32) {
+        self.overlays.add((bounds_min, bounds_max, color))
+    }
+
     render :: (&mut Self) {
         imgui.SetNextWindowSize(&mut self.window_pixel_size, .None)
 
@@ -854,7 +889,15 @@ impl Chim {
                 }
             }
 
+            // render overlays
+            for &overlay in self.overlays.slice() {
+                pos_min := vec2(f32(overlay.bounds_min.col) * scaled_size.x + offset.x, f32(overlay.bounds_min.row) * scaled_size.y + offset.y)
+                pos_max := vec2(f32(overlay.bounds_max.col) * scaled_size.x + offset.x, f32(overlay.bounds_max.row) * scaled_size.y + offset.y)
+                draw_list.AddRectFilled(&pos_min, &pos_max, overlay.color, 0, .None)
+            }
+            
             self.cursors.clear()
+            self.overlays.clear()
 
             // @assert(false)
         }

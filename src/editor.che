@@ -10,6 +10,7 @@ io :: import std.io
 fs :: import std.io.fs
 
 use import gap_buffer
+use import buffer
 
 #export_scope
 
@@ -40,448 +41,6 @@ impl Position {
     }
 }
 
-BufferLine :: struct {
-    characters : GapBuffer[char]
-}
-
-impl BufferLine {
-    empty :: (allocator: &mem.Allocator) -> BufferLine {
-        return BufferLine(
-            characters = GapBuffer[char].new(128, allocator)
-        )
-    }
-
-    from_string :: (text: string, allocator: &mem.Allocator) -> BufferLine {
-        chars := GapBuffer[char].new(text.bytes.length, allocator)
-        for c in text {
-            chars.append(c, allocator)
-        }
-        return BufferLine(
-            characters = chars
-        )
-    }
-
-    get_text :: (&Self) -> String {
-        text := String.with_capacity(self.characters.count())
-        for c in &self.characters {
-            text.append_char(c)
-        }
-        return text
-    }
-
-    get_text_from :: (&Self, index: int) -> String {
-        @assert(index <= self.characters.count())
-        text := String.with_capacity(self.characters.count() - index)
-        for c in &self.characters {
-            if it_index < index then continue
-            text.append_char(c)
-        }
-        return text
-    }
-
-    erase_from :: (&Self, index: int) {
-        @assert(index <= self.characters.count())
-
-        self.characters.move_gap(self.characters.count())
-        while self.characters.count() > index {
-            self.characters.truncate()
-        }
-    }
-}
-
-BufferEdit :: enum {
-    InsertText  : (id: int, pos: Position, text: String)
-    DeleteText  : (id: int, start: Position, end: Position)
-    InsertLine  : (id: int, line: int, text: String)
-    DeleteLine  : (id: int, line: int)
-    Group       : Array[BufferEdit]
-}
-
-BufferEditRanges :: enum {
-    None
-    One     : (start: Position, end: Position)
-    Many    : Map[int, (start: Position, end: Position)]
-}
-
-impl BufferEdit {
-    collect_ranges :: (&Self, map: &mut Map[int, (start: Position, end: Position)]) {
-        match self {
-            .InsertText($edit) -> map.set(edit.id, (edit.pos, edit.pos))
-            .InsertLine($edit) -> map.set(edit.id, (Position(edit.line, 0), Position(edit.line, 0)))
-            .DeleteText($edit) -> map.set(edit.id, (edit.start, edit.end))
-            .DeleteLine($edit) -> map.set(edit.id, (Position(edit.line, 0), Position(edit.line, 0)))
-            .Group($group) -> {
-                for(reverse=true) &change in group[..] {
-                    change.collect_ranges(map)
-                }
-            }
-            _ -> @assert(false)
-        }
-    }
-
-    get_ranges :: (&Self) -> BufferEditRanges {
-        return match self {
-            .InsertText($edit) -> BufferEditRanges.One(edit.pos, edit.pos)
-            .InsertLine($edit) -> BufferEditRanges.One(Position(edit.line, 0), Position(edit.line, 0))
-            .DeleteText($edit) -> BufferEditRanges.One(edit.start, edit.end)
-            .DeleteLine($edit) -> BufferEditRanges.One(Position(edit.line, 0), Position(edit.line, 0))
-            .Group($group) -> {
-                mut map := Map[int, (start: Position, end: Position)].new()
-
-                for(reverse=true) &change in group[..] {
-                    change.collect_ranges(&mut map)
-                }
-
-                BufferEditRanges.Many(map)
-            }
-            _ -> @assert(false)
-        }
-    }
-
-    get_range :: (&Self) -> (start: Position, end: Position) {
-        return match self {
-            .InsertText($edit) -> edit.pos, edit.pos
-            .InsertLine($edit) -> Position(edit.line, 0), Position(edit.line, 0)
-            .DeleteText($edit) -> edit.start, edit.end
-            .DeleteLine($edit) -> Position(edit.line, 0), Position(edit.line, 0)
-            .Group($group) -> {
-                @assert(group.count() > 0)
-                group[0].get_range().start, group.peek_last().get_range().end
-            }
-            _ -> @assert(false)
-        }
-    }
-}
-
-Buffer :: struct {
-    allocator   : Rc[ArenaAllocator]
-    lines       : GapBuffer[BufferLine]
-    dirty       : bool
-
-    undo_stack  := Array[BufferEdit].new()
-    undo_temp   := Array[BufferEdit].new()
-    redo_stack  := Array[BufferEdit].new()
-
-    file        := Option[String].None
-    language    := Option[string].None
-}
-
-impl Buffer {
-    from_file :: (path: string) -> Result[Rc[Buffer], ()] {
-        text := try_with(fs.read_file(path), { return Err() })
-
-        megs := 1 + u64(text.get_length()) / (1024 * 1024 * 10)
-        arena := Rc[ArenaAllocator].new(ArenaAllocator.new(1024 * 1024 * megs))
-        allocator : &mem.Allocator = arena.get()
-
-        // assume around 15 characters per line
-        mut lines := GapBuffer[BufferLine].new(text.get_length() / 15, allocator)
-
-        for line in text.slice().lines() {
-            lines.append(BufferLine.from_string(line, allocator), allocator)
-        }
-
-        if lines.count() == 0 {
-            lines.append(BufferLine.empty(allocator), allocator)
-        }
-
-        return Ok(Rc[Buffer].new(Buffer(
-            allocator   = arena
-            lines       = lines
-            dirty       = false
-            file        = Some(path.to_owned())
-        )))
-    }
-
-    scratch :: () -> Rc[Buffer] {
-        arena := Rc[ArenaAllocator].new(ArenaAllocator.new(1024 * 1024))
-        lines := GapBuffer[BufferLine].new(100, arena.get())
-
-        lines.append(BufferLine.empty(arena.get()), arena.get())
-        return Rc[Buffer].new(Buffer(
-            allocator   = arena
-            lines       = lines
-            dirty       = true
-        ))
-    }
-
-    write_to_disk :: (&Self) -> Result[(), String] {
-        return match &self.file {
-            None -> Err("Failed to write unnamed buffer to disc".to_owned())
-            Some($path) -> {
-                buffer := String.with_capacity(lines.count() * 100)
-                for &line in &self.lines {
-                    if it_index > 0 then buffer.append_char('`n')
-                    for c in &line.characters {
-                        buffer.append_char(c)
-                    }
-                }
-
-                try(fs.write_file(path.slice(), buffer.slice()))
-                @cast(&mut Self, self).dirty = false
-                Ok()
-            }
-        }
-    }
-
-    get_line :: (&Self, line: int) -> Option[&BufferLine] {
-        return if line >= 0 and line < self.lines.count() then Some(self.lines[line]) else None
-    }
-
-    get_text :: (&Self, start: Position, end: Position) -> String {
-        if start.line == end.line {
-            line := self.lines[start.line]
-            mut result := String.with_capacity(end.column - start.column)
-            for start.column .. end.column {
-                result.append_char(*line.characters[it])
-            }
-            return result
-        } else {
-            first_line := self.lines[start.line]
-            last_line := self.lines[end.line]
-            mut result := String.with_capacity((first_line.characters.count() - start.column) + end.column + (end.line - start.line - 1) * 20)
-            for start.column .. first_line.characters.count() {
-                result.append_char(*first_line.characters[it])
-            }
-            result.append_char('`n')
-            for it in (start.line + 1) .. end.line {
-                for c in &self.lines[it].characters {
-                    result.append_char(c)
-                }
-
-                result.append_char('`n')
-            }
-            for 0 .. end.column {
-                result.append_char(*last_line.characters[it])
-            }
-            return result
-        }
-    }
-
-    flush_changes :: (&mut Self) {
-        for &change in self.undo_temp[..] {
-            self.undo_stack.push(*change)
-        }
-        self.undo_temp.clear()
-    }
-
-    group_changes :: (&mut Self) {
-        if self.undo_temp.count() == 1 {
-            self.undo_stack.push(self.undo_temp.pop())
-        } else if self.undo_temp.count() > 1 {
-            changes := self.undo_temp <- Array[BufferEdit].new()
-            self.undo_stack.push(BufferEdit.Group(changes))
-        }
-    }
-
-    undo :: (&mut Self) -> BufferEditRanges {
-        if undo_temp.count() == 0 and undo_stack.count() == 0 {
-            return .None
-        }
-
-        edit := if self.undo_temp.count() > 0 {
-            undo_temp.pop()
-        } else {
-            undo_stack.pop()
-        }
-
-        redo := self.edit(edit)
-        ranges := redo.get_ranges()
-        self.redo_stack.push(redo)
-        return ranges
-    }
-
-    redo :: (&mut Self) -> BufferEditRanges {
-        if redo_stack.count() == 0 {
-            return .None
-        }
-        undo := self.edit(redo_stack.pop())
-        ranges := undo.get_ranges()
-        if self.undo_temp.count() > 0 {
-            self.undo_temp.push(undo)
-        } else {
-            self.undo_stack.push(undo)
-        }
-        return ranges
-    }
-
-    edit :: (&mut Self, edit: BufferEdit) -> BufferEdit {
-        return match edit {
-            .InsertText(($id, $pos, $text)) -> {
-                // io.formatln("InsertText({}, '{}')", [pos, text.slice()])
-                mut line := pos.line
-                mut column := pos.column
-
-                mut rem := String.empty()
-                for text.slice().lines() {
-                    if it_index == 0 {
-                        for ch in it {
-                            self.lines[line].characters.insert(column, ch, self.allocator.get())
-                            column += 1
-                        }
-                    } else {
-                        prev_line := self.lines[line]
-                        for column .. prev_line.characters.count() {
-                            rem.append_char(prev_line.characters.erase(column))
-                        }
-
-                        line += 1
-                        self.lines.insert(line, BufferLine.from_string(it, self.allocator.get()), self.allocator.get())
-                        column = self.lines[line].characters.count()
-                    }
-
-                }
-
-                for c in rem.slice() {
-                    self.lines[line].characters.insert(column + it_index, c, self.allocator.get())
-                }
-
-                BufferEdit.DeleteText((id, pos, Position(line, column)))
-            }
-
-            .InsertLine(($id, $line, $text)) -> {
-                // io.formatln("InsertLine({}, '{}')", [line, text.slice()])
-                self.lines.insert(line, BufferLine.from_string(text.slice(), self.allocator.get()), self.allocator.get())
-                BufferEdit.DeleteLine(id, line)
-            }
-
-            .DeleteText(($id, $start, $end)) -> {
-                // io.formatln("DeleteText({}, {})", [start, end])
-                deleted_text := self.get_text(start, end)
-
-                first_line := self.lines[start.line]
-                if start.line == end.line {
-                    for start.column .. end.column {
-                        first_line.characters.erase(start.column)
-                    }
-                } else {
-                    for start.column .. first_line.characters.count() {
-                        first_line.characters.erase(start.column)
-                    }
-                    for end.column .. self.lines[end.line].characters.count() {
-                        ch := self.lines[end.line].characters.erase(end.column)
-                        first_line.characters.insert(first_line.characters.count(), ch, self.allocator.get())
-                    }
-                    for it in (start.line + 1) ..= end.line {
-                        self.lines.erase(start.line + 1)
-                    }
-                }
-
-                if self.lines.count() == 0 {
-                    self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
-                }
-
-                // io.formatln("deleted text: '{}'", [deleted_text.slice()])
-                BufferEdit.InsertText((id, start, deleted_text))
-            }
-
-            .DeleteLine(($id, $line)) -> {
-                // io.formatln("DeleteLine({})", [line])
-                deleted_text := self.lines[line].get_text()
-                // io.formatln("deleted text: '{}'", [deleted_text.slice()])
-                lines.erase(line)
-
-                if self.lines.count() == 0 {
-                    self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
-                    BufferEdit.InsertText((id, Position(line, 0), deleted_text))
-                } else {
-                    BufferEdit.InsertLine((id, line, deleted_text))
-                }
-            }
-
-            .Group($group) -> {
-                mut inverse := Array[BufferEdit].new(group.count())
-                while group.count() > 0 {
-                    inverse.push(self.edit(group.pop()))
-                }
-                BufferEdit.Group(inverse)
-            }
-
-            $op -> {
-                io.formatln("undo(): {} not implemented", [&op])
-                BufferEdit.InsertLine((0, 0, String.empty()))
-            }
-        }
-    }
-
-    insert_line :: (&mut Self, line: int, text: string, id: int) {
-        self.lines.insert(line, BufferLine.from_string(text, self.allocator.get()), self.allocator.get())
-
-        self.undo_temp.push(.DeleteLine(id, line))
-        self.redo_stack.clear()
-        self.dirty = true
-    }
-
-    append_string :: (&mut Self, line: int, text: string, id: int) {
-        if line < 0 or line >= self.lines.count() {
-            io.formatln("[ERROR] trying to insert at {} into buffer with {} lines", [line, self.lines.count()])
-            return
-        }
-        self.insert_string(line, self.lines[line].characters.count(), text, id)
-    }
-
-    insert_string :: (&mut Self, line: int, column: int, text: string, id: int) -> (start: Position, end: Position) {
-        if line < 0 or line >= self.lines.count() {
-            io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
-            return (Position(line, column), Position(line, column))
-        }
-
-        undo := self.edit(BufferEdit.InsertText(id, Position(line, column), text.to_owned()))
-        range := undo.get_range()
-        self.undo_temp.push(undo)
-        self.redo_stack.clear()
-        self.dirty = true
-        return range
-    }
-
-    insert_char :: (&mut Self, line: int, column: int, ch: char, id: int) {
-        if line < 0 or line >= self.lines.count() {
-            io.formatln("[ERROR] trying to insert at {}:{} into buffer with {} lines", [line, column, self.lines.count()])
-            return
-        }
-
-        self.undo_temp.push(self.edit(BufferEdit.InsertText(id, Position(line, column), String.from_char(ch))))
-        self.redo_stack.clear()
-        self.dirty = true
-    }
-
-    erase_line :: (&mut Self, line: int, id: int) {
-        if line < 0 or line >= self.lines.count() {
-            io.formatln("[ERROR] trying to erase line {} in buffer with {} lines", [line, self.lines.count()])
-            return
-        }
-
-        text := self.lines[line].get_text()
-        self.lines.erase(line)
-        if self.lines.count() == 0 {
-            self.lines.insert(0, BufferLine.empty(self.allocator.get()), self.allocator.get())
-        }
-
-        self.undo_temp.push(.InsertLine(id, line, text))
-        self.redo_stack.clear()
-        self.dirty = true
-    }
-
-    erase_range :: (&mut Self, start: Position, end: Position, id: int) {
-        self.undo_temp.push(self.edit(BufferEdit.DeleteText(id, start, end)))
-        self.redo_stack.clear()
-        self.dirty = true
-    }
-
-    erase_char :: (&mut Self, line: int, column: int, id: int) {
-        if line < 0 or line >= self.lines.count() {
-            io.formatln("[ERROR] trying to erase char at {}:{} in buffer with {} lines", [line, column, self.lines.count()])
-            return
-        }
-
-        buffer_line := self.lines[line]
-        text := String.from_char(buffer_line.characters.erase(column))
-
-        self.undo_temp.push(.InsertText(id, Position(line, column), text))
-        self.redo_stack.clear()
-        self.dirty = true
-    }
-}
 
 LineNumberMode :: enum #tag_type(i32) #repr("C") #copy {
     None
@@ -543,6 +102,8 @@ View :: struct {
 
     top_line            : int = 0
     active_cursor       := 0
+
+    preferred_size      : (width: int, height: int) = 0, 0
 
     line_number_mode    := Option[LineNumberMode].None
     wrapping_enabled    := Option[bool].None
@@ -1067,25 +628,552 @@ impl View {
 
 Split :: enum {
     None        : Rc[View]
-    Vertical    : Array[Rc[Split]]
-    Horizontal  : Array[Rc[Split]]
+    Vertical    : Array[Split]
+    Horizontal  : Array[Split]
+}
+
+impl Clone for Split {
+    clone :: (&Self) -> Split {
+        return match self {
+            .None($view)         -> Split.None(view.clone())
+            .Vertical($splits)   -> Split.Vertical(splits.clone())
+            .Horizontal($splits) -> Split.Horizontal(splits.clone())
+            _ -> @assert(false)
+        }
+    }
+}
+
+impl Split {
+    get_view :: (&Self, path: []int) -> Rc[View] {
+        // io.formatln("get_view({})", [path])
+        if path.length == 0 {
+            return self.get_first_view()
+        }
+
+        return match self {
+            .None($view) -> view.clone()
+
+            .Vertical($splits) -> {
+                index := *path[0]
+                splits[index.clamp(0, splits.count() - 1)].get_view(path[1..])
+            }
+
+            .Horizontal($splits) -> {
+                index := *path[0]
+                splits[index.clamp(0, splits.count() - 1)].get_view(path[1..])
+            }
+
+            _ -> @assert(false)
+        }
+    }
+
+    get_path :: (&Self, target: &Rc[View]) -> Option[Array[int]] {
+        get_path_impl :: (self: &Self, target: &Rc[View], path: &mut Array[int]) -> bool {
+            return match self {
+                .None($view) -> {
+                    if view == target {
+                        path.add(0)
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                .Vertical($splits) -> {
+                    for &split in splits[..] {
+                        if get_path_impl(split, target, path) {
+                            path.insert_at(0, it_index)
+                            return true
+                        }
+                    }
+                    false
+                }
+
+                .Horizontal($splits) -> {
+                    for &split in splits[..] {
+                        if get_path_impl(split, target, path) {
+                            path.insert_at(0, it_index)
+                            return true
+                        }
+                    }
+                    false
+                }
+            }
+        }
+
+        mut path := Array[int].new()
+        if get_path_impl(self, target, &mut path) {
+            // io.formatln("path: {}", [path.slice()])
+            return Some(path)
+        } else {
+            return None
+        }
+    }
+
+    close :: (&Self, path: []int) -> Split {
+        close_impl :: (self: &Self, path: []int) -> Option[Split] {
+            if path.length == 0 {
+                return None
+            }
+            return match self {
+                .None($view) -> None
+
+                .Vertical($splits) -> {
+                    to_close_index := *path[0]
+
+                    closed := close_impl(splits[to_close_index], path[1..])
+
+                    mut result := splits.clone()
+                    match closed {
+                        Some($split) -> {
+                            *result[to_close_index] = split
+                        }
+
+                        None -> {
+                            result.remove_at(to_close_index)
+                        }
+                    }
+
+                    if result.count() == 0 {
+                        Memory.drop(result)
+                        None
+                    } else if result.count() == 1 {
+                        split := result[0].clone()
+                        Memory.drop(result)
+                        Some(split)
+                    } else {
+                        Some(Split.Vertical(result))
+                    }
+                }
+
+                .Horizontal($splits) -> {
+                    to_close_index := *path[0]
+
+                    closed := close_impl(splits[to_close_index], path[1..])
+
+                    mut result := splits.clone()
+                    match closed {
+                        Some($split) -> {
+                            *result[to_close_index] = split
+                        }
+
+                        None -> {
+                            result.remove_at(to_close_index)
+                        }
+                    }
+
+                    if result.count() == 0 {
+                        Memory.drop(result)
+                        None
+                    } else if result.count() == 1 {
+                        split := result[0].clone()
+                        Memory.drop(result)
+                        Some(split)
+                    } else {
+                        Some(Split.Horizontal(result))
+                    }
+                }
+
+                _ -> @assert(false)
+            }
+        }
+
+        return match close_impl(self, path) {
+            Some($split) -> split
+            None         -> self.clone()
+        }
+    }
+
+    split_vertical :: (&Self, path: []int) -> Split {
+        // io.formatln("split_vertical({})", [path])
+        return match self {
+            .None($view) -> if path.length == 1 and *path[0] == 0 {
+                mut result := Array[Split].new()
+                result.add(Split.None(view.clone()))
+                result.add(Split.None(View.new(view.get().buffer.clone())))
+                Split.Vertical(result)
+            } else {
+                Split.None(view.clone())
+            }
+
+            .Vertical($splits) -> {
+                result := splits.clone()
+
+                if path.length <= 1 {
+                    return Split.Vertical(result)
+                }
+
+                index := *path[0]
+
+                if index >= result.count() {
+                    return Split.Vertical(result)
+                }
+
+                match result[index] {
+                    .None($view) -> {
+                        result.insert_at(index + 1, .None(View.new(view.get().buffer.clone())))
+                    }
+
+                    $split -> {
+                        *result[index] = split.split_vertical(path[1..])
+                    }
+
+                    _ -> @assert(false)
+                }
+
+                Split.Vertical(result)
+            }
+
+            .Horizontal($splits) -> {
+                result := splits.clone()
+
+                if path.length <= 1 {
+                    return Split.Horizontal(result)
+                }
+
+                index := *path[0]
+
+                if index >= result.count() {
+                    return Split.Horizontal(result)
+                }
+
+                match result[index] {
+                    .None($view) -> {
+                        mut split := Array[Split].new()
+                        split.add(Split.None(view.clone()))
+                        split.add(Split.None(View.new(view.get().buffer.clone())))
+                        *result[index] = Split.Vertical(split)
+                    }
+
+                    $split -> {
+                        *result[index] = split.split_vertical(path[1..])
+                    }
+
+                    _ -> @assert(false)
+                }
+
+                Split.Horizontal(result)
+            }
+
+            _ -> @assert(false)
+        }
+    }
+
+    split_horizontal :: (&Self, path: []int) -> Split {
+        // io.formatln("split_horizontal({})", [path])
+        return match self {
+            .None($view) -> if path.length == 1 and *path[0] == 0 {
+                mut result := Array[Split].new()
+                result.add(Split.None(view.clone()))
+                result.add(Split.None(View.new(view.get().buffer.clone())))
+                Split.Horizontal(result)
+            } else {
+                Split.None(view.clone())
+            }
+
+            .Horizontal($splits) -> {
+                result := splits.clone()
+
+                if path.length <= 1 {
+                    return Split.Horizontal(result)
+                }
+
+                index := *path[0]
+
+                if index >= result.count() {
+                    return Split.Horizontal(result)
+                }
+
+                match result[index] {
+                    .None($view) -> {
+                        result.insert_at(index + 1, .None(View.new(view.get().buffer.clone())))
+                    }
+
+                    $split -> {
+                        *result[index] = split.split_horizontal(path[1..])
+                    }
+
+                    _ -> @assert(false)
+                }
+
+                Split.Horizontal(result)
+            }
+
+            .Vertical($splits) -> {
+                result := splits.clone()
+
+                if path.length <= 1 {
+                    return Split.Vertical(result)
+                }
+
+                index := *path[0]
+
+                if index >= result.count() {
+                    return Split.Vertical(result)
+                }
+
+                match result[index] {
+                    .None($view) -> {
+                        mut split := Array[Split].new()
+                        split.add(Split.None(view.clone()))
+                        split.add(Split.None(View.new(view.get().buffer.clone())))
+                        *result[index] = Split.Horizontal(split)
+                    }
+
+                    $split -> {
+                        *result[index] = split.split_horizontal(path[1..])
+                    }
+
+                    _ -> @assert(false)
+                }
+
+                Split.Vertical(result)
+            }
+
+            _ -> @assert(false)
+        }
+    }
+
+    get_first_view :: (&Self) -> Rc[View] {
+        return match self {
+            .None($view) -> view.clone()
+            .Vertical($splits) -> {
+                @assert(splits.count() > 0)
+                splits[0].get_first_view()
+            }
+            .Horizontal($splits) -> {
+                @assert(splits.count() > 0)
+                splits[0].get_first_view()
+            }
+            _ -> @assert(false)
+        }
+    }
+
+    get_vertical_view :: (&Self, path: &mut Array[int], offset: int) -> bool {
+        @assert(offset == 1 or offset == -1)
+        get_vertical_view_impl :: (self: &Self, index: int, path: &mut Array[int], offset: int) -> (found: bool, moved: bool) {
+            return match self {
+                .None($view) -> {
+                    if index == path.count() - 1 and *path[index] == 0 {
+                        true, false
+                    } else {
+                        false, false
+                    }
+                }
+
+                .Vertical($splits) -> {
+                    @assert(index < path.count() - 1)
+                    split_index := *path[index]
+                    if split_index >= splits.count() {
+                        return false, false
+                    }
+
+                    found, moved := get_vertical_view_impl(splits[split_index], index + 1, path, offset)
+                    if moved {
+                        return found, true
+                    }
+
+                    if found {
+                        new_index := split_index + offset
+                        if new_index < 0 or new_index >= splits.count() {
+                            return true, false
+                        }
+
+                        *path[index] = new_index
+
+                        match splits[new_index] {
+                            .Horizontal($vert) -> {
+                                *path[index + 1] = path[index + 1].clamp(0, vert.count() - 1)
+                                path.resize(index + 2)
+                            }
+
+                            _ -> {
+                                path.resize(index + 1)
+                            }
+                        }
+                        return true, true
+                    }
+
+                    false, false
+                }
+
+                .Horizontal($splits) -> {
+                    @assert(index < path.count())
+                    split_index := *path[index]
+                    if split_index >= splits.count() {
+                        return false, false
+                    }
+
+                    get_vertical_view_impl(splits[split_index], index + 1, path, offset)
+                }
+            }
+        }
+
+        found, moved := get_vertical_view_impl(self, 0, path, offset)
+        return found and moved
+    }
+
+    get_horizontal_view :: (&Self, path: &mut Array[int], offset: int) -> bool {
+        @assert(offset == 1 or offset == -1)
+        get_horizontal_view_impl :: (self: &Self, index: int, path: &mut Array[int], offset: int) -> (found: bool, moved: bool) {
+            return match self {
+                .None($view) -> {
+                    if index == path.count() - 1 and *path[index] == 0 {
+                        true, false
+                    } else {
+                        false, false
+                    }
+                }
+
+                .Horizontal($splits) -> {
+                    @assert(index < path.count() - 1)
+                    split_index := *path[index]
+                    if split_index >= splits.count() {
+                        return false, false
+                    }
+
+                    found, moved := get_horizontal_view_impl(splits[split_index], index + 1, path, offset)
+                    if moved {
+                        return found, true
+                    }
+
+                    if found {
+                        new_index := split_index + offset
+                        if new_index < 0 or new_index >= splits.count() {
+                            return true, false
+                        }
+
+                        *path[index] = new_index
+
+                        match splits[new_index] {
+                            .Vertical($hor) -> {
+                                *path[index + 1] = path[index + 1].clamp(0, hor.count() - 1)
+                                path.resize(index + 2)
+                            }
+
+                            _ -> {
+                                path.resize(index + 1)
+                            }
+                        }
+                        return true, true
+                    }
+
+                    false, false
+                }
+
+                .Vertical($splits) -> {
+                    @assert(index < path.count())
+                    split_index := *path[index]
+                    if split_index >= splits.count() {
+                        return false, false
+                    }
+
+                    get_horizontal_view_impl(splits[split_index], index + 1, path, offset)
+                }
+            }
+        }
+
+        found, moved := get_horizontal_view_impl(self, 0, path, offset)
+        return found and moved
+    }
+
+    get_preferred_size :: (&Self) -> (width: int, height: int) {
+        return match self {
+            .None($view) -> view.get().preferred_size
+            .Vertical($splits) -> {
+                mut width, height := 0, 0
+                for &split in splits[..] {
+                    size := split.get_preferred_size()
+                    width += size.width
+                    height = max(height, size.height)
+                }
+                return width, height
+            }
+            .Horizontal($splits) -> {
+                mut width, height := 0, 0
+                for &split in splits[..] {
+                    size := split.get_preferred_size()
+                    width = max(width, size.width)
+                    height += size.height
+                }
+                return width, height
+            }
+            _ -> @assert(false)
+        }
+    }
 }
 
 Tab :: struct {
-    split : Rc[Split]
+    split       : Split
+    active_view : Rc[View]
 }
 
 impl Tab {
     new :: (view: Rc[View]) -> Rc[Tab] {
         return Rc[Tab].new(Tab(
-            split = Rc[Split].new(Split.None(view))
+            split       = Split.None(view.clone())
+            active_view = view
         ))
     }
 
     get_active_view :: (&Self) -> Rc[View] {
-        return match self.split.get() {
-            .None($view) -> view.clone()
-            _ -> @assert(false)
+        return self.active_view.clone()
+    }
+
+    split_vertical :: (&mut Self, target: Rc[View]) {
+        path := self.split.get_path(&target)
+        match path {
+            .Some($path) -> {
+                new_split := self.split.split_vertical(path.slice())
+                self.split = new_split
+            }
+
+            .None -> {}
         }
+    }
+
+    split_horizontal :: (&mut Self, target: Rc[View]) {
+        path := self.split.get_path(&target)
+        match path {
+            .Some($path) -> {
+                new_split := self.split.split_horizontal(path.slice())
+                self.split = new_split
+            }
+
+            .None -> {}
+        }
+    }
+
+    move_vertical_split :: (&mut Self, offset: int) {
+        @assert(offset == 1 or offset == -1)
+        mut path := try_with(self.split.get_path(&self.active_view), {
+            return
+        })
+        // io.formatln("move_vertical_split({}): path={}", [offset, path.slice()])
+        if self.split.get_vertical_view(&mut path, offset) {
+            // io.formatln("move_vertical_split({}): path={}", [offset, path.slice()])
+            self.active_view = self.split.get_view(path.slice())
+        }
+    }
+
+    move_horizontal_split :: (&mut Self, offset: int) {
+        @assert(offset == 1 or offset == -1)
+        mut path := try_with(self.split.get_path(&self.active_view), {
+            return
+        })
+        // io.formatln("move_horizontal_split({}): path={}", [offset, path.slice()])
+        if self.split.get_horizontal_view(&mut path, offset) {
+            // io.formatln("move_horizontal_split({}): path={}", [offset, path.slice()])
+            self.active_view = self.split.get_view(path.slice())
+        }
+    }
+
+    close_view :: (&mut Self) {
+        path := try_with(self.split.get_path(&self.active_view), {
+            return
+        })
+        new_split := self.split.close(path.slice())
+        self.split = new_split
+        self.active_view = self.split.get_view(path.slice())
     }
 }

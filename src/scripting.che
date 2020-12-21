@@ -14,6 +14,7 @@ use import glfw_hl
 
 use import chim
 use import editor
+use import buffer
 use import gap_buffer
 use import editor_input
 use import editor_render
