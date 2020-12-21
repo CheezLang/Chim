@@ -14,6 +14,7 @@ use import gap_buffer
 use import editor_input
 use import editor_render
 use import clipboard
+use import buffer
 
 #export_scope
 
@@ -75,7 +76,6 @@ CommandType :: enum {
     ChangeFont      : String
     Script          : (ref: int, args: Array[Argument])
     ExecuteCommand
-    TabNext, TabPrev
     DeleteLeft, DeleteRight
     DeleteLine
     BufferSave
@@ -85,6 +85,8 @@ CommandType :: enum {
     NextVerticalSplit, PrevVerticalSplit
     NextHorizontalSplit, PrevHorizontalSplit
     CloseView
+    TabNext, TabPrev
+    TabNew, TabClose
 }
 
 impl Clone for CommandType {
@@ -218,6 +220,10 @@ impl Command {
                 CommandType.TabNext
             } else if name == "tab_prev" {
                 CommandType.TabPrev
+            } else if name == "tab_new" {
+                CommandType.TabNew
+            } else if name == "tab_close" {
+                CommandType.TabClose
             } else if name == "mode_insert" {
                 CommandType.SwitchMode(InputMode.Insert)
             } else if name == "mode_normal" {
@@ -401,12 +407,31 @@ impl Chim {
             .TabNext -> {
                 for 0 .. count {
                     self.active_tab = (self.active_tab + 1) % self.tabs.count()
+                    self.active_view = self.tabs[self.active_tab].get().get_active_view()
                 }
             }
 
             .TabPrev -> {
                 for 0 .. count {
                     self.active_tab = (self.active_tab - 1 + self.tabs.count()) % self.tabs.count()
+                    self.active_view = self.tabs[self.active_tab].get().get_active_view()
+                }
+            }
+
+            .TabNew -> {
+                for 0 .. count {
+                    scratch_buffer := Buffer.scratch()
+                    self.buffers.add(scratch_buffer.clone())
+                    self.tabs.add(Tab.new(View.new(scratch_buffer)))
+                }
+            }
+
+            .TabClose -> {
+                for 0 .. count {
+                    if self.tabs.count() > 1 {
+                        self.tabs.remove_at(self.active_tab)
+                        self.active_tab %= self.tabs.count()
+                    }
                 }
             }
 

@@ -37,6 +37,8 @@ do
     -- editor commands
     chim.map("normal", "{C Tab}", "editor.tab_next")
     chim.map("normal", "{CS Tab}", "editor.tab_prev")
+    chim.map("normal", "Vt", "editor.tab_new")
+    chim.map("normal", "Vc", "editor.tab_close")
     chim.map("normal", "{C s}", "editor.buffer_save")
     chim.map("normal", "i", "editor.mode_insert")
     chim.map("normal", "{C r}", "editor.activate_command_line")
