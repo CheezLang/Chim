@@ -245,8 +245,8 @@ impl Chim {
             self.command_view = View.new(buffer)
         }
 
-        // config_path := fmt.format("{}/config/config.lua", [&exe_path])
-        config_path := fmt.format("./config/config.lua", [&exe_path])
+        config_path := fmt.format("{}/config/config.lua", [&exe_path])
+        // config_path := fmt.format("./config/config.lua", [&exe_path])
         io.formatln("[Chim] loading config file...")
         try_with(self.scripting_engine.get_mut().load_file(config_path.slice()), {
             io.formatln("[ERROR] Failed to load '{}': {}", [&config_path, &err])
